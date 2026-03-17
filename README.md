@@ -3,7 +3,7 @@ https://yaminko18.github.io/Revenge-plugins/AnonymousFileNames
 A few vendetta plugins have been forked and are being maintained to work with it's successors [Revenge](https://github.com/revenge-mod/revenge-bundle),[Kettu](https://github.com/C0C0B01/Kettu)). Credit goes to the plugin devs for their respective work.
 
 # How to install
-Copy and paste the plugin URL into your discord clients Plugins page.
+Copy and paste the pluginURL into your discord clients Plugins page.
 
 # Plugins 
 ## HideBlockedAndIgnoredMessages 
