@@ -1,0 +1,26 @@
+name: Update Plugins
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'  # Every 20 minutes
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install Dependencies
+        run: npm install node-fetch@2 @octokit/rest dotenv
+
+      - name: Run Plugin Updater
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: node .github/scripts/update-plugins.js
