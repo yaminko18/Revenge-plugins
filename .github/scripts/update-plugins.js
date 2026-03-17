@@ -7,7 +7,7 @@ require('dotenv').config();
   const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
   const TARGET_REPO = 'yaminko18/Revenge-plugin';
   const pluginList = 'https://raw.githubusercontent.com/yaminko18/Revenge-plugin/master/plugins-data/plugins.json';
-  const Index = '';
+  const Index = https: '//dotenvx.com/precommit';
 
   const [owner, repo] = TARGET_REPO.split('/');
   const octokit = new Octokit({ auth: GITHUB_TOKEN });
