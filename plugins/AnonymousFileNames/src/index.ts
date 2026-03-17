@@ -110,38 +110,3 @@ export const onUnload = () => {
         unpatch();
     }
 };
-                const files = args[0]?.items ?? args[0]?.files ?? args[0]?.uploads;
-                if (!Array.isArray(files)) return;
-
-                const length = isNaN(parseInt(storage.nameLength)) ? 8 : parseInt(storage.nameLength);
-                for (const file of files) {
-                    anonymousFileName(file, length);
-                }
-            })
-        );
-    }
-} catch {}
-
-// just because discord exploded uploadModule
-try {
-    const cloudUploadModule = findByProps("CloudUpload");
-    if (cloudUploadModule) {
-        unpatches.push(
-            before("CloudUpload", cloudUploadModule, (args) => {
-                const uploadObject = args[0];
-                if (!uploadObject) return;
-
-                const length = isNaN(parseInt(storage.nameLength)) ? 8 : parseInt(storage.nameLength);
-                anonymousFileName(uploadObject, length);
-            })
-        );
-    }
-} catch {}
-
-export const onUnload = () => {
-    for (const unpatch of unpatches) {
-        unpatch();
-    }
-};
-
-export { default as settings } from "./Settings";
