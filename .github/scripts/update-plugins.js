@@ -5,9 +5,9 @@ require('dotenv').config();
   const { Octokit } = await import('@octokit/rest');
 
   const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-  const TARGET_REPO = 'shipwr3ckd/revengeplugin';
-  const pluginList = 'https://raw.githubusercontent.com/shipwr3ckd/revengeplugin/master/plugins-data/plugins.json';
-  const Index = 'https://raw.githubusercontent.com/Purple-EyeZ/Plugins-List/main/src/plugins-data.json';
+  const TARGET_REPO = 'yaminko18/Revenge-plugin';
+  const pluginList = 'https://raw.githubusercontent.com/yaminko18/Revenge-plugin/master/plugins-data/plugins.json';
+  const Index = '';
 
   const [owner, repo] = TARGET_REPO.split('/');
   const octokit = new Octokit({ auth: GITHUB_TOKEN });
