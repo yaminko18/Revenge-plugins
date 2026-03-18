@@ -1,14 +1,10 @@
 {
     "name": "AnonymousFileNames",
-    "description": "Randomises file names before you upload them.",
+    "description": "Randomises file names with best movie quotes before you upload them.",
     "authors": [
         {
-            "name": "maisy",
-            "id": "257109471589957632"
-        },
-        {
-            "name": "シグマ siguma",
-            "id": "737597276339437578"
+            "name": "Yaminko",
+            "id": "666"
         }
     ],
     "main": "src/index.ts",
