@@ -1,14 +1,11 @@
 {
-  "name": "CopyBios",
-  "description": "Copy bio text",
+  "name": "Show Image Links",
+  "description": "Shows image links if the message is just a linked image.",
   "authors": [
-    {
-      "name": "シグマ siguma",
-      "id": "737597276339437578"
-    }
+    { "name": "Yaminko", "id": "" }
   ],
-  "main": "src/index.ts",
+  "main": "src/index.js",
   "vendetta": {
-    "icon": "ic_profile_24px"
+    "icon": "ic_link"
   }
 }
