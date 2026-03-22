@@ -1,4 +1,5 @@
 const RowManager = vendetta.metro.findByName("RowManager");
+const { showToast } = vendetta.metro.findByProps("showToast");
 let unpatch: (() => void) | undefined;
 
 const getFilename = (url: string): string => {
@@ -28,6 +29,13 @@ export function onLoad() {
     }
 
     if (e.content.length == 0 && r > 0) e.content.push(...c);
+
+    // Debug toast
+    if (e?.attachments?.length > 0) {
+      showToast?.(`attachments: ${JSON.stringify(e.attachments[0]?.content_type)}`);
+    } else {
+      showToast?.("no attachments");
+    }
 
     const attachmentNodes: any[] = (e.attachments ?? [])
       .filter((t: any) => t.content_type?.startsWith("image/"))
