@@ -4,7 +4,7 @@
   "authors": [
     { "name": "Yaminko", "id": "" }
   ],
-  "main": "src/index.ts",
+  "main": "src/index.js",
   "vendetta": {
     "icon": "ic_link"
   }
