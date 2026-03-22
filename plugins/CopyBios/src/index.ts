@@ -13,12 +13,11 @@ const getFilename = (url: string): string => {
 export function onLoad() {
   unpatch = vendetta.patcher.after("generate", RowManager.prototype, function(d: any, g: any) {
     let [h] = d, { message: e } = g;
-    if (h.rowType !== 1 || !e?.embeds || !e?.content) return;
+    if (h.rowType !== 1 || (!e?.embeds && !e?.attachments) || !e?.content) return;
 
-    // Embedy — pôvodná logika
     let r = 0;
     const n: string[] = [];
-    for (const t of e.embeds)
+    for (const t of (e.embeds ?? []))
       (t.type == "image" || t.type == "gifv") && (r++, n.push(t.url));
 
     const c: any[] = [];
@@ -30,7 +29,6 @@ export function onLoad() {
 
     if (e.content.length == 0 && r > 0) e.content.push(...c);
 
-    // Attachmenty — vždy pripoj názov na koniec
     const attachmentNodes: any[] = (e.attachments ?? [])
       .filter((t: any) => t.content_type?.startsWith("image/"))
       .filter((t: any) => t.url)
