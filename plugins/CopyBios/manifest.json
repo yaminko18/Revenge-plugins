@@ -1,5 +1,5 @@
 {
-  "name": "Show Image Links",
+  "name": "CopyBios",
   "description": "Shows image links if the message is just a linked image.",
   "authors": [
     { "name": "Yaminko", "id": "" }
