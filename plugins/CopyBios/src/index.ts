@@ -1,5 +1,6 @@
+declare const vendetta: any;
+
 const RowManager = vendetta.metro.findByName("RowManager");
-const MessageStore = vendetta.metro.findByProps("getMessage", "getMessages");
 let unpatch: (() => void) | undefined;
 
 const getFilename = (url: string): string => {
@@ -12,15 +13,15 @@ const getFilename = (url: string): string => {
 };
 
 export function onLoad() {
+  const MessageStore = vendetta.metro.findByProps("getMessage", "getMessages");
+
   unpatch = vendetta.patcher.after("generate", RowManager.prototype, function(d: any, g: any) {
     let [h] = d, { message: e } = g;
-    if (h.rowType !== 1 || !e?.content) return;
-
-    const fullMessage = MessageStore?.getMessage(e.channel_id, e.id) ?? e;
+    if (h.rowType !== 1 || !e?.embeds || !e?.content) return;
 
     let r = 0;
     const n: string[] = [];
-    for (const t of (fullMessage.embeds ?? []))
+    for (const t of e.embeds)
       (t.type == "image" || t.type == "gifv") && (r++, n.push(t.url));
 
     const c: any[] = [];
@@ -32,7 +33,10 @@ export function onLoad() {
 
     if (e.content.length == 0 && r > 0) e.content.push(...c);
 
-    const attachmentNodes: any[] = (fullMessage.attachments ?? [])
+    const fullMessage = MessageStore?.getMessage(e.channel_id, e.id);
+    const attachments = fullMessage?.attachments ?? [];
+
+    const attachmentNodes: any[] = attachments
       .filter((t: any) => t.content_type?.startsWith("image/"))
       .filter((t: any) => t.url)
       .map((t: any) => ({ type: "text", content: t.filename ?? getFilename(t.url) }));
