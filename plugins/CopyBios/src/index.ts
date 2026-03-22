@@ -15,7 +15,9 @@
   const contentIsJustUrl = (content: any[], url: string): boolean => {
     if (content.length !== 1) return false;
     const node = content[0];
-    return node.type === "text" && node.content?.trim() === url;
+    if (node.type === "text" && node.content?.trim() === url) return true;
+    if (node.type === "link" && node.target?.trim() === url) return true;
+    return false;
   };
 
   const l = function() {
@@ -23,7 +25,6 @@
       let [h] = d, { message: e } = g;
       if (h.rowType !== 1 || (!e?.embeds && !e?.attachments)) return;
 
-      // Embedy → klikateľné linky
       const embedNodes: any[] = (e.embeds ?? [])
         .filter((t: any) => t.type === "image" || t.type === "gifv")
         .filter((t: any) => t.url)
@@ -33,7 +34,6 @@
           target: t.url
         }));
 
-      // Attachmenty → len text s názvom súboru
       const attachmentNodes: any[] = (e.attachments ?? [])
         .filter((t: any) => t.content_type?.startsWith("image/"))
         .filter((t: any) => t.url)
@@ -45,10 +45,12 @@
       const allNodes = [...embedNodes, ...attachmentNodes];
       if (allNodes.length === 0) return;
 
-      // Vložiť ak je content prázdny alebo obsahuje len surový URL
       const isEmpty = !e.content || e.content.length === 0;
-      const isJustUrl = !isEmpty && embedNodes.length === 1 
-        && contentIsJustUrl(e.content, embedNodes[0].target);
+
+      const firstUrl = embedNodes[0]?.target ?? (e.attachments ?? [])
+        .find((t: any) => t.content_type?.startsWith("image/"))?.url;
+
+      const isJustUrl = !isEmpty && !!firstUrl && contentIsJustUrl(e.content, firstUrl);
 
       if (isEmpty || isJustUrl) {
         e.content = allNodes.flatMap((node: any, i: number) =>
