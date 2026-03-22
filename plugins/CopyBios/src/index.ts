@@ -1,41 +1,45 @@
-import { findByName } from "@vendetta/metro";
-import { ReactNative } from "@vendetta/metro/common";
-import { after, unpatchAll } from "@vendetta/patcher";
+(function(o, u, f) {
+  "use strict";
+  const p = u.findByName("RowManager");
+  let a;
 
-const BioText = findByName("BioText", false);
-
-function textSelection(node: any): void {
-  if (!node || typeof node !== "object") return;
-
-  if (node.type === ReactNative.Text) {
-    node.props.selectable = true;
-
-    if (typeof node.props.onPress !== "function") {
-      node.props.onPress = () => {};
+  const getFilename = (url) => {
+    try {
+      const path = new URL(url).pathname;
+      return decodeURIComponent(path.split("/").pop()) || url;
+    } catch {
+      return url;
     }
-  }
+  };
 
-  const children = node.props?.children;
-  if (Array.isArray(children)) {
-    for (const child of children) {
-      textSelection(child);
-    }
-  } else if (typeof children === "object") {
-    textSelection(children);
-  }
-}
+  const l = function() {
+    a = f.after("generate", p.prototype, function(d, g) {
+      let [h] = d, { message: e } = g;
+      if (h.rowType !== 1 || !e?.embeds) return;
 
-after("default", BioText, ([props], res) => {
-  if (!res?.props) return res;
+      const imageUrls = e.embeds
+        .filter(t => t.type === "image" || t.type === "gifv")
+        .map(t => t.url)
+        .filter(Boolean);
 
-  res.props.selectable = true;
+      if (imageUrls.length === 0) return;
 
-  if (typeof res.props.onPress !== "function") {
-    res.props.onPress = () => {};
-  }
+      if (!e.content || e.content.length === 0) {
+        const nodes = [];
+        imageUrls.forEach((url, i) => {
+          nodes.push({
+            type: "link",
+            content: [{ type: "text", content: getFilename(url) }],
+            target: url
+          });
+          if (i < imageUrls.length - 1)
+            nodes.push({ type: "text", content: "\n" });
+        });
+        e.content = nodes;
+      }
+    });
+  };
 
-  textSelection(res);
-  return res;
-});
-
-export const onUnload = () => unpatchAll();
+  const i = function() { a?.(); };
+  return o.onLoad = l, o.onUnload = i, o;
+})({}, vendetta.metro, vendetta.patcher);
