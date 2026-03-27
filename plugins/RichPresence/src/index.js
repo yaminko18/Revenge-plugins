@@ -1,8 +1,6 @@
 import { FluxDispatcher } from "@vendetta/metro/common";
-import { pill } from "@vendetta/ui/assets"; // Prípadne iná ikona, ak by si chcel
-import { before as patchBefore } from "@vendetta/patcher";
+import { before as patchBefore, after as patchAfter } from "@vendetta/patcher";
 
-// Mapa českých mesiacov vrátane skloňovania (pády)
 const czechToSlovakMonths = {
     "leden": "január", "ledna": "januára", "lednu": "januári", "lednem": "januárom",
     "únor": "február", "února": "februára", "únoru": "februári", "únorem": "februárom",
@@ -18,63 +16,65 @@ const czechToSlovakMonths = {
     "prosinec": "december", "prosince": "decembra", "prosinci": "decembri", "prosincem": "decembrom"
 };
 
-// Zoradenie kľúčov podľa dĺžky (kvôli frázam ako "v září")
 const sortedKeys = Object.keys(czechToSlovakMonths).sort((a, b) => b.length - a.length);
 const regexPattern = sortedKeys.map(k => k.replace(" ", "\\s+")).join('|');
 const monthRegex = new RegExp(`(?<!\\p{L})(${regexPattern})(?!\\p{L})`, 'giu');
 
-let unpatch;
+const patches = [];
+
+function checkAndTranslate(message) {
+    if (!message?.content || !monthRegex.test(message.content)) return;
+
+    const translated = message.content.replace(monthRegex, (match) => {
+        const normalizedMatch = match.replace(/\s+/g, ' ').toLowerCase();
+        let translatedMonth = czechToSlovakMonths[normalizedMatch];
+        if (!translatedMonth) return match;
+        if (match[0] === match[0].toUpperCase()) {
+            translatedMonth = translatedMonth.charAt(0).toUpperCase() + translatedMonth.slice(1);
+        }
+        return translatedMonth;
+    });
+
+    // Spustíme dispatch s malým oneskorením
+    setTimeout(() => {
+        FluxDispatcher.dispatch({
+            type: "MESSAGE_EDIT_FAILED_AUTOMOD",
+            messageData: {
+                type: 1,
+                message: {
+                    channelId: message.channel_id || message.channelId,
+                    messageId: message.id,
+                },
+            },
+            errorResponseBody: {
+                code: 200000,
+                message: `🇸🇰 Preklad: ${translated}`,
+            },
+        });
+    }, 150);
+}
 
 export default {
     onLoad() {
         try {
-            unpatch = patchBefore("dispatch", FluxDispatcher, (args) => {
+            // 1. Zachytávanie nových správ v reálnom čase
+            patches.push(patchBefore("dispatch", FluxDispatcher, (args) => {
                 const event = args[0];
-
-                // Sledujeme prichádzajúce správy
-                if (event?.type !== "MESSAGE_CREATE") return;
-                if (!event?.message || !event?.message?.content) return;
-
-                const content = event.message.content;
-
-                if (monthRegex.test(content)) {
-                    const translated = content.replace(monthRegex, (match) => {
-                        const normalizedMatch = match.replace(/\s+/g, ' ').toLowerCase();
-                        let translatedMonth = czechToSlovakMonths[normalizedMatch];
-                        
-                        if (!translatedMonth) return match;
-
-                        // Zachovanie veľkého začiatočného písmena
-                        if (match[0] === match[0].toUpperCase()) {
-                            translatedMonth = translatedMonth.charAt(0).toUpperCase() + translatedMonth.slice(1);
-                        }
-                        return translatedMonth;
-                    });
-
-                    // Odoslanie lokálneho upozornenia pod správu (vypožičané z NoDelete)
-                    setTimeout(() => {
-                        FluxDispatcher.dispatch({
-                            type: "MESSAGE_EDIT_FAILED_AUTOMOD",
-                            messageData: {
-                                type: 1,
-                                message: {
-                                    channelId: event.channelId || event.message.channel_id,
-                                    messageId: event.message.id,
-                                },
-                            },
-                            errorResponseBody: {
-                                code: 200000,
-                                message: `🇸🇰 Preklad: ${translated}`,
-                            },
-                        });
-                    }, 100);
+                if (event?.type === "MESSAGE_CREATE" && event.message) {
+                    checkAndTranslate(event.message);
                 }
-            });
+                
+                // 2. Zachytávanie správ pri načítaní histórie (keď scrolluješ hore alebo otvoríš kanál)
+                if (event?.type === "LOAD_MESSAGES_SUCCESS" && event.messages) {
+                    event.messages.forEach(msg => checkAndTranslate(msg));
+                }
+            }));
+
         } catch (e) {
             console.error(e);
         }
     },
     onUnload() {
-        if (typeof unpatch === "function") unpatch();
+        for (const unpatch of patches) unpatch();
     }
 };
