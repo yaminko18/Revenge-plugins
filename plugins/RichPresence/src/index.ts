@@ -1,129 +1,80 @@
 import { FluxDispatcher } from "@vendetta/metro/common";
-import { findByProps } from "@vendetta/metro";
-import { storage } from "@vendetta/plugin";
-import { logger } from "@vendetta";
-import Settings from "./Settings";
-import { cloneAndFilter } from "./utils";
+import { pill } from "@vendetta/ui/assets"; // Prípadne iná ikona, ak by si chcel
+import { before as patchBefore } from "@vendetta/patcher";
 
-const assetManager = findByProps("getAssetIds");
-const pluginStartSince = Date.now();
-
-const typedStorage = storage as typeof storage & {
-  selected: string;
-  selections: Record<string, Activity>;
+// Mapa českých mesiacov vrátane skloňovania (pády)
+const czechToSlovakMonths = {
+    "leden": "január", "ledna": "januára", "lednu": "januári", "lednem": "januárom",
+    "únor": "február", "února": "februára", "únoru": "februári", "únorem": "februárom",
+    "březen": "marec", "března": "marca", "březnu": "marci", "březnem": "marcom",
+    "duben": "apríl", "dubna": "apríla", "dubnu": "apríli", "dubnem": "aprílom",
+    "květen": "máj", "května": "mája", "květnu": "máji", "květnem": "májom",
+    "červen": "jún", "června": "júna", "červnu": "júni", "červnem": "júnom",
+    "červenec": "júl", "července": "júla", "červenci": "júli", "červencem": "júlom",
+    "srpen": "august", "srpna": "augusta", "srpnu": "auguste", "srpnem": "augustom",
+    "v září": "v septembri", "do září": "do septembra", "ze září": "zo septembra", "září": "september",
+    "říjen": "október", "října": "októbra", "říjnu": "októbri", "říjnem": "októbrom",
+    "v listopadu": "v novembri", "listopadu": "novembra", "listopad": "november", "listopadem": "novembrom",
+    "prosinec": "december", "prosince": "decembra", "prosinci": "decembri", "prosincem": "decembrom"
 };
 
-enum ActivityTypes {
-  PLAYING = 0,
-  STREAMING = 1,
-  LISTENING = 2,
-  WATCHING = 3,
-  COMPETING = 5,
-}
+// Zoradenie kľúčov podľa dĺžky (kvôli frázam ako "v září")
+const sortedKeys = Object.keys(czechToSlovakMonths).sort((a, b) => b.length - a.length);
+const regexPattern = sortedKeys.map(k => k.replace(" ", "\\s+")).join('|');
+const monthRegex = new RegExp(`(?<!\\p{L})(${regexPattern})(?!\\p{L})`, 'giu');
 
-function createDefaultSelection(): Activity {
-  return {
-    name: "Reveg©",
-    application_id: "1054951789318909972",
-    flags: 0,
-    type: ActivityTypes.PLAYING,
-    timestamps: {
-      _enabled: false,
-      start: pluginStartSince,
-    },
-    assets: {},
-    buttons: [{}, {}],
-  };
-}
-
-if (!storage.selected || typeof storage.selected !== "string") {
-  logger.log("[Rich Presence] Initializing default storage");
-  storage.selected = "default";
-  storage.selections = { default: createDefaultSelection() };
-}
-
-async function sendRequest(activity: Activity | null): Promise<Activity | null> {
-  if (activity === null) {
-    FluxDispatcher.dispatch({
-      type: "LOCAL_ACTIVITY_UPDATE",
-      activity: null,
-      pid: 1608,
-      socketId: "RPC@Reveg",
-    });
-    logger.log("[Rich Presence] Cleared activity");
-    return null;
-  }
-
-  logger.log("[Rich Presence] Preparing activity:", activity);
-
-  const timestampEnabled = activity.timestamps?._enabled;
-  activity = cloneAndFilter(activity);
-
-  if (timestampEnabled) {
-    if (typeof activity.timestamps.start !== "number") {
-      activity.timestamps.start = pluginStartSince;
-    }
-    if (typeof activity.timestamps.end !== "number" || activity.timestamps.end === 0) {
-      delete activity.timestamps.end;
-    }
-    if (Object.keys(activity.timestamps).length === 0) {
-      delete activity.timestamps;
-    }
-  } else {
-    delete activity.timestamps;
-  }
-
-  if (activity.assets) {
-    try {
-      const args = [activity.application_id, [activity.assets.large_image, activity.assets.small_image]];
-      let assetIds = assetManager.getAssetIds(...args);
-      if (!assetIds.length) assetIds = await assetManager.fetchAssetIds(...args);
-      activity.assets.large_image = assetIds[0] ?? activity.assets.large_image;
-      activity.assets.small_image = assetIds[1] ?? activity.assets.small_image;
-    } catch (e) {
-      logger.error("[Rich Presence] Failed to resolve asset IDs:", e);
-    }
-  }
-
-  if (activity.buttons?.length) {
-    activity.buttons = activity.buttons.filter(x => x && x.label);
-    if (activity.buttons.length) {
-      Object.assign(activity, {
-        metadata: { button_urls: activity.buttons.map(x => x.url) },
-        buttons: activity.buttons.map(x => x.label),
-      });
-    } else {
-      delete activity.buttons;
-    }
-  } else {
-    delete activity.buttons;
-  }
-
-  FluxDispatcher.dispatch({
-    type: "LOCAL_ACTIVITY_UPDATE",
-    activity,
-    pid: 1608,
-    socketId: "RichPresence@Vendetta",
-  });
-
-  logger.log("[Rich Presence] Activity sent:", activity);
-  return activity;
-}
+let unpatch;
 
 export default {
-  onLoad() {
-    const current = storage.selections?.[storage.selected];
-    if (!current) {
-      logger.error("[Rich Presence] Invalid selected profile:", storage.selected);
-      return;
+    onLoad() {
+        try {
+            unpatch = patchBefore("dispatch", FluxDispatcher, (args) => {
+                const event = args[0];
+
+                // Sledujeme prichádzajúce správy
+                if (event?.type !== "MESSAGE_CREATE") return;
+                if (!event?.message || !event?.message?.content) return;
+
+                const content = event.message.content;
+
+                if (monthRegex.test(content)) {
+                    const translated = content.replace(monthRegex, (match) => {
+                        const normalizedMatch = match.replace(/\s+/g, ' ').toLowerCase();
+                        let translatedMonth = czechToSlovakMonths[normalizedMatch];
+                        
+                        if (!translatedMonth) return match;
+
+                        // Zachovanie veľkého začiatočného písmena
+                        if (match[0] === match[0].toUpperCase()) {
+                            translatedMonth = translatedMonth.charAt(0).toUpperCase() + translatedMonth.slice(1);
+                        }
+                        return translatedMonth;
+                    });
+
+                    // Odoslanie lokálneho upozornenia pod správu (vypožičané z NoDelete)
+                    setTimeout(() => {
+                        FluxDispatcher.dispatch({
+                            type: "MESSAGE_EDIT_FAILED_AUTOMOD",
+                            messageData: {
+                                type: 1,
+                                message: {
+                                    channelId: event.channelId || event.message.channel_id,
+                                    messageId: event.message.id,
+                                },
+                            },
+                            errorResponseBody: {
+                                code: 200000,
+                                message: `🇸🇰 Preklad: ${translated}`,
+                            },
+                        });
+                    }, 100);
+                }
+            });
+        } catch (e) {
+            console.error(e);
+        }
+    },
+    onUnload() {
+        if (typeof unpatch === "function") unpatch();
     }
-
-    sendRequest(current).catch(e => logger.error("[Rich Presence] Send failed:", e));
-  },
-
-  onUnload() {
-    sendRequest(null);
-  },
-
-  settings: Settings,
 };
