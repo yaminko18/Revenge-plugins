@@ -1,18 +1,7 @@
 {
-  "name": "Rich Presence",
-  "description": "Sets Discord Rich Presence for your profile.",
-  "authors": [
-    {
-      "name": "pylix",
-      "id": "492949202121261067"
-    },
-    {
-      "name": "シグマ siguma",
-      "id": "737597276339437578"
-    }
-  ],
-  "main": "src/index.ts",
-  "vendetta": {
-    "icon": "ic_controller_24px"
-  }
+	"name": "CzechMonthTranslate",
+	"description": "Prekladá české názvy mesiacov v správach do slovenčiny.",
+	"authors": [{ "name": "Yaminko", "id": "666" }],
+	"main": "./src/index.js",
+	"vendetta": { "icon": "ic_language_24px" }
 }
