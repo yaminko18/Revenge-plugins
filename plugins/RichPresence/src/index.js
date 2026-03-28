@@ -24,65 +24,53 @@ const monthRegex = new RegExp(`(?<!\\p{L})(${regexPattern})(?!\\p{L})`, 'giu');
 
 let unpatch;
 
-function processMessage(msg, delay = 150) {
+function processMessage(msg) {
     if (!msg?.content || !monthRegex.test(msg.content)) return;
 
-    const translated = msg.content.replace(monthRegex, (match) => {
+    const originalContent = msg.content;
+    const translatedContent = originalContent.replace(monthRegex, (match) => {
         const norm = match.replace(/\s+/g, ' ').toLowerCase();
         let res = czechToSlovakMonths[norm];
         if (!res) return match;
         return match[0] === match[0].toUpperCase() ? res.charAt(0).toUpperCase() + res.slice(1) : res;
     });
 
+    // Ak sa po nahradení text nijako nezmenil, nepokračujeme
+    if (originalContent === translatedContent) return;
+
+    // Tu plugin skontroluje tvoje nastavenia
     if (storage.overwriteMode) {
-        msg.content = translated;
+        // REŽIM 1: Priame prepísanie textu
+        msg.content = translatedContent;
     } else {
-        // Použijeme delay, aby sme nezahltili Dispatcher pri načítaní histórie
+        // REŽIM 2: Červená správa pod textom
         setTimeout(() => {
             FluxDispatcher.dispatch({
                 type: "MESSAGE_EDIT_FAILED_AUTOMOD",
-                messageData: { 
-                    type: 1, 
-                    message: { 
-                        channelId: msg.channel_id || msg.channelId, 
-                        messageId: msg.id 
-                    } 
-                },
-                errorResponseBody: { 
-                    code: 200000, 
-                    message: `🇸🇰 Preklad: ${translated}` 
-                },
+                messageData: { type: 1, message: { channelId: msg.channel_id || msg.channelId, messageId: msg.id } },
+                errorResponseBody: { code: 200000, message: `🇸🇰 Preklad: ${translatedContent}` },
             });
-        }, delay);
+        }, 150);
     }
 }
 
 export default {
+    // Exportujeme komponent s nastaveniami, aby sa zobrazil vo Vendetta menu
     settings,
+    
     onLoad() {
-        if (storage.overwriteMode === undefined) storage.overwriteMode = false;
+        // Predvolená hodnota: ak používateľ ešte nič nenastavil, prepisovanie je VYPNUTÉ
+        storage.overwriteMode = storage.overwriteMode ?? false;
 
         unpatch = patchBefore("dispatch", FluxDispatcher, ([event]) => {
-            // Nová správa
-            if (event?.type === "MESSAGE_CREATE" && event.message) {
-                processMessage(event.message, 150);
-            }
-            
-            // História správ - pridávame postupné oneskorenie
-            if (event?.type === "LOAD_MESSAGES_SUCCESS" && event.messages) {
-                event.messages.forEach((msg, index) => {
-                    // Každá správa v histórii dostane o 50ms väčší odstup
-                    processMessage(msg, 200 + (index * 50));
-                });
-            }
-
-            // Editácia správy
-            if (event?.type === "MESSAGE_UPDATE" && event.message) {
-                processMessage(event.message, 150);
-            }
+            if (event?.type === "MESSAGE_CREATE" && event.message) processMessage(event.message);
+            if (event?.type === "LOAD_MESSAGES_SUCCESS" && event.messages) event.messages.forEach(processMessage);
+            // Pridávam aj MESSAGE_UPDATE – ak by niekto zeditoval správu a ty by si mal zapnuté prepisovanie, aby preklad nezmizol.
+            if (event?.type === "MESSAGE_UPDATE" && event.message) processMessage(event.message);
         });
     },
-    onUnload() {
-        if (unpatch) unpatch();
+    
+    onUnload() { 
+        if (unpatch) unpatch(); 
     }
 };
