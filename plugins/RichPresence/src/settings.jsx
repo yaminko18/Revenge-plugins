@@ -1,24 +1,25 @@
 import { storage } from "@vendetta/plugin";
 import { useProxy } from "@vendetta/storage";
 import { Forms } from "@vendetta/ui/components";
-import { ReactNative, React } from "@vendetta/metro/common";
+import { ReactNative } from "@vendetta/metro/common";
 
-const { FormSwitchRow, FormSection } = Forms;
+const { FormSwitchRow } = Forms;
 const { ScrollView } = ReactNative;
 
-export default function Settings() {
+export default () => {
+    // useProxy zabezpečí, že sa UI okamžite aktualizuje po kliknutí
     useProxy(storage);
 
     return (
         <ScrollView style={{ flex: 1 }}>
-            <FormSection title="Nastavenia prekladu" titleStyle={{ marginTop: 20 }}>
-                <FormSwitchRow
-                    label="Priamo prepísať text"
-                    subLabel="ZAPNUTÉ: Prepíše text v bubline. VYPNUTÉ: Zobrazí preklad pod správou (červený text)."
-                    value={storage.overwriteMode ?? false}
-                    onValueChange={(v) => storage.overwriteMode = v}
-                />
-            </FormSection>
+            <FormSwitchRow
+                label="Priamo prepísať text správy"
+                subLabel="ZAPNUTÉ: Text sa prepíše priamo v bubline. VYPNUTÉ: Pôvodný text ostane a preklad sa zobrazí pod ním ako červená systémová správa."
+                value={storage.overwriteMode ?? false}
+                onValueChange={(value) => {
+                    storage.overwriteMode = value;
+                }}
+            />
         </ScrollView>
     );
-}
+};
