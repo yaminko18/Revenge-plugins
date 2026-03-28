@@ -24,7 +24,7 @@ const monthRegex = new RegExp(`(?<!\\p{L})(${regexPattern})(?!\\p{L})`, 'giu');
 
 let unpatch;
 
-function processMessage(msg) {
+function processMessage(msg, delay = 150) {
     if (!msg?.content || !monthRegex.test(msg.content)) return;
 
     const translated = msg.content.replace(monthRegex, (match) => {
@@ -37,25 +37,49 @@ function processMessage(msg) {
     if (storage.overwriteMode) {
         msg.content = translated;
     } else {
+        // Použijeme delay, aby sme nezahltili Dispatcher pri načítaní histórie
         setTimeout(() => {
             FluxDispatcher.dispatch({
                 type: "MESSAGE_EDIT_FAILED_AUTOMOD",
-                messageData: { type: 1, message: { channelId: msg.channel_id || msg.channelId, messageId: msg.id } },
-                errorResponseBody: { code: 200000, message: `🇸🇰 Preklad: ${translated}` },
+                messageData: { 
+                    type: 1, 
+                    message: { 
+                        channelId: msg.channel_id || msg.channelId, 
+                        messageId: msg.id 
+                    } 
+                },
+                errorResponseBody: { 
+                    code: 200000, 
+                    message: `🇸🇰 Preklad: ${translated}` 
+                },
             });
-        }, 150);
+        }, delay);
     }
 }
 
 export default {
-    settings, // <--- TOTO MUSÍ BYŤ TU
+    settings,
     onLoad() {
         if (storage.overwriteMode === undefined) storage.overwriteMode = false;
 
         unpatch = patchBefore("dispatch", FluxDispatcher, ([event]) => {
-            if (event?.type === "MESSAGE_CREATE" && event.message) processMessage(event.message);
-            if (event?.type === "LOAD_MESSAGES_SUCCESS" && event.messages) event.messages.forEach(processMessage);
-            if (event?.type === "MESSAGE_UPDATE" && event.message) processMessage(event.message);
+            // Nová správa
+            if (event?.type === "MESSAGE_CREATE" && event.message) {
+                processMessage(event.message, 150);
+            }
+            
+            // História správ - pridávame postupné oneskorenie
+            if (event?.type === "LOAD_MESSAGES_SUCCESS" && event.messages) {
+                event.messages.forEach((msg, index) => {
+                    // Každá správa v histórii dostane o 50ms väčší odstup
+                    processMessage(msg, 200 + (index * 50));
+                });
+            }
+
+            // Editácia správy
+            if (event?.type === "MESSAGE_UPDATE" && event.message) {
+                processMessage(event.message, 150);
+            }
         });
     },
     onUnload() {
