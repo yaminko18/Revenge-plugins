@@ -11,10 +11,10 @@ export default function Settings() {
 
     return (
         <ScrollView style={{ flex: 1 }}>
-            <FormSection title="Režim prekladu" titleStyle={{ marginTop: 20 }}>
+            <FormSection title="Nastavenia prekladu" titleStyle={{ marginTop: 20 }}>
                 <FormSwitchRow
                     label="Priamo prepísať text"
-                    subLabel="Ak je zapnuté, český mesiac sa nahradí slovenským priamo v správe. Ak je vypnuté, preklad sa zobrazí pod správou."
+                    subLabel="ZAPNUTÉ: Prepíše text v bubline. VYPNUTÉ: Zobrazí preklad pod správou (červený text)."
                     value={storage.overwriteMode ?? false}
                     onValueChange={(v) => storage.overwriteMode = v}
                 />
