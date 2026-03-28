@@ -1,7 +1,5 @@
 import { FluxDispatcher } from "@vendetta/metro/common";
-import { before as patchBefore } from "@vendetta/patcher";
-import { storage } from "@vendetta/plugin";
-import settings from "./settings.jsx";
+import { before as patchBefore, after as patchAfter } from "@vendetta/patcher";
 
 const czechToSlovakMonths = {
     "leden": "január", "ledna": "januára", "lednu": "januári", "lednem": "januárom",
@@ -20,89 +18,63 @@ const czechToSlovakMonths = {
 
 const sortedKeys = Object.keys(czechToSlovakMonths).sort((a, b) => b.length - a.length);
 const regexPattern = sortedKeys.map(k => k.replace(" ", "\\s+")).join('|');
-// Flag 'g' v kombinácii s .test() je zradný, v processMessage ho budeme resetovať
 const monthRegex = new RegExp(`(?<!\\p{L})(${regexPattern})(?!\\p{L})`, 'giu');
 
-let unpatch;
+const patches = [];
 
-function processMessage(msg) {
-    if (!msg?.content) return;
+function checkAndTranslate(message) {
+    if (!message?.content || !monthRegex.test(message.content)) return;
 
-    // Resetujeme index hľadania, aby sme nezačínali uprostred textu z predchádzajúcej správy
-    monthRegex.lastIndex = 0;
-
-    // Ak v správe nie je žiadny mesiac, končíme hneď
-    if (!monthRegex.test(msg.content)) return;
-
-    const originalContent = msg.content;
-    monthRegex.lastIndex = 0; // Reset aj pred samotným nahradením
-
-    const translatedContent = originalContent.replace(monthRegex, (match) => {
-        const norm = match.replace(/\s+/g, ' ').toLowerCase();
-        let res = czechToSlovakMonths[norm];
-        if (!res) return match;
-        
-        // Zachovanie veľkého začiatočného písmena
+    const translated = message.content.replace(monthRegex, (match) => {
+        const normalizedMatch = match.replace(/\s+/g, ' ').toLowerCase();
+        let translatedMonth = czechToSlovakMonths[normalizedMatch];
+        if (!translatedMonth) return match;
         if (match[0] === match[0].toUpperCase()) {
-            res = res.charAt(0).toUpperCase() + res.slice(1);
+            translatedMonth = translatedMonth.charAt(0).toUpperCase() + translatedMonth.slice(1);
         }
-        return res;
+        return translatedMonth;
     });
 
-    if (originalContent === translatedContent) return;
-
-    if (storage.overwriteMode) {
-        // REŽIM 1: Priame prepísanie (funguje v patchBefore)
-        msg.content = translatedContent;
-    } else {
-        // REŽIM 2: Červená správa
-        // Musíme použiť ID kanála a správy správne podľa typu eventu
-        const channelId = msg.channel_id || msg.channelId;
-        const messageId = msg.id;
-
-        if (!channelId || !messageId) return;
-
-        setTimeout(() => {
-            FluxDispatcher.dispatch({
-                type: "MESSAGE_EDIT_FAILED_AUTOMOD",
-                messageData: { 
-                    type: 1, 
-                    message: { channelId, messageId } 
+    // Spustíme dispatch s malým oneskorením
+    setTimeout(() => {
+        FluxDispatcher.dispatch({
+            type: "MESSAGE_EDIT_FAILED_AUTOMOD",
+            messageData: {
+                type: 1,
+                message: {
+                    channelId: message.channel_id || message.channelId,
+                    messageId: message.id,
                 },
-                errorResponseBody: { 
-                    code: 200000, 
-                    message: `🇸🇰 Preklad: ${translatedContent}` 
-                },
-            });
-        }, 150);
-    }
+            },
+            errorResponseBody: {
+                code: 200000,
+                message: `🇸🇰 Preklad: ${translated}`,
+            },
+        });
+    }, 150);
 }
 
 export default {
-    settings,
     onLoad() {
-        storage.overwriteMode = storage.overwriteMode ?? false;
+        try {
+            // 1. Zachytávanie nových správ v reálnom čase
+            patches.push(patchBefore("dispatch", FluxDispatcher, (args) => {
+                const event = args[0];
+                if (event?.type === "MESSAGE_CREATE" && event.message) {
+                    checkAndTranslate(event.message);
+                }
+                
+                // 2. Zachytávanie správ pri načítaní histórie (keď scrolluješ hore alebo otvoríš kanál)
+                if (event?.type === "LOAD_MESSAGES_SUCCESS" && event.messages) {
+                    event.messages.forEach(msg => checkAndTranslate(msg));
+                }
+            }));
 
-        unpatch = patchBefore("dispatch", FluxDispatcher, ([event]) => {
-            if (!event) return;
-
-            // Spracovanie novej správy
-            if (event.type === "MESSAGE_CREATE" && event.message) {
-                processMessage(event.message);
-            }
-            
-            // Spracovanie pri načítaní histórie
-            if (event.type === "LOAD_MESSAGES_SUCCESS" && Array.isArray(event.messages)) {
-                event.messages.forEach(processMessage);
-            }
-
-            // Spracovanie pri editácii správy
-            if (event.type === "MESSAGE_UPDATE" && event.message) {
-                processMessage(event.message);
-            }
-        });
+        } catch (e) {
+            console.error(e);
+        }
     },
-    onUnload() { 
-        if (unpatch) unpatch(); 
+    onUnload() {
+        for (const unpatch of patches) unpatch();
     }
 };
