@@ -4,6 +4,7 @@ import { storage } from "@vendetta/plugin";
 import settings from "./settings.jsx";
 
 const czechToSlovakMonths = {
+    // s diakritikou
     "leden": "január", "ledna": "januára", "lednu": "januári", "lednem": "januárom",
     "únor": "február", "února": "februára", "únoru": "februári", "únorem": "februárom",
     "březen": "marec", "března": "marca", "březnu": "marci", "březnem": "marcom",
@@ -15,7 +16,17 @@ const czechToSlovakMonths = {
     "v září": "v septembri", "do září": "do septembra", "ze září": "zo septembra", "září": "september",
     "říjen": "október", "října": "októbra", "říjnu": "októbri", "říjnem": "októbrom",
     "v listopadu": "v novembri", "listopadu": "novembra", "listopad": "november", "listopadem": "novembrom",
-    "prosinec": "december", "prosince": "decembra", "prosinci": "decembri", "prosincem": "decembrom"
+    "prosinec": "december", "prosince": "decembra", "prosinci": "decembri", "prosincem": "decembrom",
+
+    // bez diakritiky
+    "unor": "február", "unora": "februára", "unoru": "februári", "unorem": "februárom",
+    "brezen": "marec", "brezna": "marca", "breznu": "marci", "breznem": "marcom",
+    "kveten": "máj", "kvetna": "mája", "kvetnu": "máji", "kvetnem": "májom",
+    "cerven": "jún", "cervna": "júna", "cervnu": "júni", "cervnem": "júnom",
+    "cervenec": "júl", "cervence": "júla", "cervenci": "júli", "cervencem": "júlom",
+    "zari": "september",
+    "v zari": "v septembri", "do zari": "do septembra", "ze zari": "zo septembra",
+    "rijen": "október", "rijna": "októbra", "rijnu": "októbri", "rijnem": "októbrom"
 };
 
 const sortedKeys = Object.keys(czechToSlovakMonths).sort((a, b) => b.length - a.length);
