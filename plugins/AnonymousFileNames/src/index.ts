@@ -3,9 +3,11 @@ import { before } from "@vendetta/patcher";
 import { storage } from "@vendetta/plugin";
 import randomString from "./lib/randomString";
 import { getTypePrefix, FilePrefix } from "./lib/typeFileName";
+import { initFilter, shouldProcess } from "./lib/filterHelper";
 
 storage.nameLength ??= 8;
 storage.mode ??= "quotes";
+initFilter();
 
 const CZECH_QUOTES = [
     "proletáři všech zemí, polibte mi prdel",
@@ -63,7 +65,6 @@ function randomQuote(): string {
     return CZECH_QUOTES[Math.floor(Math.random() * CZECH_QUOTES.length)];
 }
 
-// counters: per-batch pocitadlo pre typed mode { image: 0, video: 1, ... }
 function getNewName(length: number, ext: string, counters: Partial<Record<FilePrefix, number>>): string {
     const mode: string = storage.mode ?? "quotes";
 
@@ -76,7 +77,6 @@ function getNewName(length: number, ext: string, counters: Partial<Record<FilePr
 
     if (mode === "quotes") return randomQuote();
 
-    // random
     return randomString(length);
 }
 
@@ -90,7 +90,7 @@ function anonymousFileName(file: any, length: number, counters: Partial<Record<F
     const extIdx = originalFilename.lastIndexOf(".");
     const ext = extIdx !== -1 ? originalFilename.slice(extIdx) : "";
 
-    // Skip check iba pre random mode – quotes a typed maju variabilnu/fixnu dlzku inu ako nameLength
+    // Skip check iba pre random mode
     if ((storage.mode ?? "quotes") === "random") {
         if (
             originalFilename.length ===
@@ -113,6 +113,8 @@ try {
     if (uploadModule) {
         unpatches.push(
             before("uploadLocalFiles", uploadModule, (args) => {
+                if (!shouldProcess()) return;
+
                 const files = args[0]?.items ?? args[0]?.files ?? args[0]?.uploads;
                 if (!Array.isArray(files)) return;
 
@@ -133,6 +135,8 @@ try {
     if (cloudUploadModule) {
         unpatches.push(
             before("CloudUpload", cloudUploadModule, (args) => {
+                if (!shouldProcess()) return;
+
                 const uploadObject = args[0];
                 if (!uploadObject) return;
 
