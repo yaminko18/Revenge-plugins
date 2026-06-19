@@ -2,9 +2,10 @@ import { findByProps } from "@vendetta/metro";
 import { before } from "@vendetta/patcher";
 import { storage } from "@vendetta/plugin";
 import randomString from "./lib/randomString";
+import { getTypePrefix, FilePrefix } from "./lib/typeFileName";
 
 storage.nameLength ??= 8;
-storage.useQuotes ??= true;
+storage.mode ??= "quotes";
 
 const CZECH_QUOTES = [
     "proletáři všech zemí, polibte mi prdel",
@@ -62,34 +63,47 @@ function randomQuote(): string {
     return CZECH_QUOTES[Math.floor(Math.random() * CZECH_QUOTES.length)];
 }
 
-function getNewName(length: number): string {
-    if (storage.useQuotes ?? true) return randomQuote();
+// counters: per-batch pocitadlo pre typed mode { image: 0, video: 1, ... }
+function getNewName(length: number, ext: string, counters: Partial<Record<FilePrefix, number>>): string {
+    const mode: string = storage.mode ?? "quotes";
+
+    if (mode === "typed") {
+        const prefix = getTypePrefix(ext);
+        const idx = counters[prefix] ?? 0;
+        counters[prefix] = idx + 1;
+        return `${prefix}${idx}`;
+    }
+
+    if (mode === "quotes") return randomQuote();
+
+    // random
     return randomString(length);
 }
 
-function anonymousFileName(file: any, length: number) {
+function anonymousFileName(file: any, length: number, counters: Partial<Record<FilePrefix, number>>) {
     const fileData = file?.file ?? file;
     if (!fileData) return;
 
     const originalFilename = fileData.filename ?? fileData.name;
-    if (typeof originalFilename !== 'string') return;
+    if (typeof originalFilename !== "string") return;
 
-    // Skip check len iba pre random string mode (quotes maju variabilnu dlzku)
-    if (!(storage.useQuotes ?? true)) {
+    const extIdx = originalFilename.lastIndexOf(".");
+    const ext = extIdx !== -1 ? originalFilename.slice(extIdx) : "";
+
+    // Skip check iba pre random mode – quotes a typed maju variabilnu/fixnu dlzku inu ako nameLength
+    if ((storage.mode ?? "quotes") === "random") {
         if (
             originalFilename.length ===
-            length + (originalFilename.lastIndexOf(".") > -1 ? originalFilename.length - originalFilename.lastIndexOf(".") : 0)
+            length + (extIdx > -1 ? originalFilename.length - extIdx : 0)
         ) {
             return;
         }
     }
 
-    const extIdx = originalFilename.lastIndexOf(".");
-    const ext = extIdx !== -1 ? originalFilename.slice(extIdx) : "";
-    const newFilename = getNewName(length) + ext;
+    const newFilename = getNewName(length, ext, counters) + ext;
 
-    if (typeof fileData.filename !== 'undefined') fileData.filename = newFilename;
-    if (typeof fileData.name !== 'undefined') fileData.name = newFilename;
+    if (typeof fileData.filename !== "undefined") fileData.filename = newFilename;
+    if (typeof fileData.name !== "undefined") fileData.name = newFilename;
 }
 
 const unpatches: (() => void)[] = [];
@@ -103,8 +117,10 @@ try {
                 if (!Array.isArray(files)) return;
 
                 const length = isNaN(parseInt(storage.nameLength)) ? 8 : parseInt(storage.nameLength);
+                const counters: Partial<Record<FilePrefix, number>> = {};
+
                 for (const file of files) {
-                    anonymousFileName(file, length);
+                    anonymousFileName(file, length, counters);
                 }
             })
         );
@@ -121,7 +137,9 @@ try {
                 if (!uploadObject) return;
 
                 const length = isNaN(parseInt(storage.nameLength)) ? 8 : parseInt(storage.nameLength);
-                anonymousFileName(uploadObject, length);
+                const counters: Partial<Record<FilePrefix, number>> = {};
+
+                anonymousFileName(uploadObject, length, counters);
             })
         );
     }
