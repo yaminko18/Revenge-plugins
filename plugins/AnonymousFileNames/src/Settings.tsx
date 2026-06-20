@@ -6,7 +6,7 @@ import { storage } from "@vendetta/plugin";
 import { initFilter } from "./lib/filterHelper";
 
 const { FormInput, FormRow, FormSection, FormSwitch } = Forms;
-const { useMemo, useState, useEffect } = React;
+const { useMemo, useState } = React;
 
 type Mode = "quotes" | "random" | "typed";
 
@@ -31,11 +31,11 @@ export default () => {
     const [dmsOpen,    setDmsOpen]    = useState(false);
     const [guildsOpen, setGuildsOpen] = useState(false);
 
-    const mode: Mode     = storage.mode ?? "quotes";
-    const dmsMode        = storage.filter?.dmsMode    ?? "all";
-    const guildsMode     = storage.filter?.guildsMode ?? "all";
-    const allowedDMs:    string[] = storage.filter?.allowedDMs    ?? [];
-    const allowedGuilds: string[] = storage.filter?.allowedGuilds ?? [];
+    const mode: Mode      = storage.mode ?? "quotes";
+    const dmsMode         = storage.filter?.dmsMode    ?? "all";
+    const guildsMode      = storage.filter?.guildsMode ?? "all";
+    const excludedDMs:    string[] = storage.filter?.excludedDMs    ?? [];
+    const excludedGuilds: string[] = storage.filter?.excludedGuilds ?? [];
 
     const { dmChannels, UserStore } = useMemo(() => {
         let dmChannels: any[] = [];
@@ -55,23 +55,6 @@ export default () => {
             const store = findByProps("getGuilds");
             return Object.values(store?.getGuilds?.() ?? {}) as any[];
         } catch { return []; }
-    }, []);
-
-    // Pri otvoreni nastaveni automaticky pridaj nove DMs a servery do zoznamov
-    useEffect(() => {
-        const currentDMs = storage.filter?.allowedDMs ?? [];
-        const missingDMs = dmChannels
-            .map((c: any) => c.id)
-            .filter((id: string) => !currentDMs.includes(id));
-        if (missingDMs.length > 0)
-            setFilter({ allowedDMs: [...currentDMs, ...missingDMs] });
-
-        const currentGuilds = storage.filter?.allowedGuilds ?? [];
-        const missingGuilds = guilds
-            .map((g: any) => g.id)
-            .filter((id: string) => !currentGuilds.includes(id));
-        if (missingGuilds.length > 0)
-            setFilter({ allowedGuilds: [...currentGuilds, ...missingGuilds] });
     }, []);
 
     function getDMName(channel: any): string {
@@ -147,7 +130,7 @@ export default () => {
                 {/* DM accordion */}
                 <FormRow
                     label="DM Filter"
-                    subLabel={dmsMode === "all" ? "All DMs" : `${allowedDMs.length} selected`}
+                    subLabel={dmsMode === "all" ? "All DMs" : `${excludedDMs.length} excluded`}
                     trailing={
                         <RN.Text style={{ fontSize: 18, color: "#72767D" }}>
                             {dmsOpen ? "▾" : "›"}
@@ -179,9 +162,9 @@ export default () => {
                                 subLabel={getDMSub(channel)}
                                 trailing={
                                     <FormSwitch
-                                        value={allowedDMs.includes(channel.id)}
+                                        value={!excludedDMs.includes(channel.id)}
                                         onValueChange={() =>
-                                            setFilter({ allowedDMs: toggleInList(allowedDMs, channel.id) })
+                                            setFilter({ excludedDMs: toggleInList(excludedDMs, channel.id) })
                                         }
                                     />
                                 }
@@ -193,7 +176,7 @@ export default () => {
                 {/* Server accordion */}
                 <FormRow
                     label="Server Filter"
-                    subLabel={guildsMode === "all" ? "All servers" : `${allowedGuilds.length} selected`}
+                    subLabel={guildsMode === "all" ? "All servers" : `${excludedGuilds.length} excluded`}
                     trailing={
                         <RN.Text style={{ fontSize: 18, color: "#72767D" }}>
                             {guildsOpen ? "▾" : "›"}
@@ -224,9 +207,9 @@ export default () => {
                                 label={guild.name}
                                 trailing={
                                     <FormSwitch
-                                        value={allowedGuilds.includes(guild.id)}
+                                        value={!excludedGuilds.includes(guild.id)}
                                         onValueChange={() =>
-                                            setFilter({ allowedGuilds: toggleInList(allowedGuilds, guild.id) })
+                                            setFilter({ excludedGuilds: toggleInList(excludedGuilds, guild.id) })
                                         }
                                     />
                                 }
