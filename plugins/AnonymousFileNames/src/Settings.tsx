@@ -31,12 +31,13 @@ export default () => {
     const [dmsOpen,    setDmsOpen]    = useState(false);
     const [guildsOpen, setGuildsOpen] = useState(false);
 
-    const mode: Mode      = storage.mode ?? "quotes";
-    const dmsMode         = storage.filter?.dmsMode    ?? "all";
-    const guildsMode      = storage.filter?.guildsMode ?? "all";
-    const excludedDMs:    string[] = storage.filter?.excludedDMs    ?? [];
-    const excludedGuilds: string[] = storage.filter?.excludedGuilds ?? [];
+    const mode: Mode     = storage.mode ?? "quotes";
+    const dmsMode        = storage.filter?.dmsMode    ?? "all";
+    const guildsMode     = storage.filter?.guildsMode ?? "all";
+    const allowedDMs:    string[] = storage.filter?.allowedDMs    ?? [];
+    const allowedGuilds: string[] = storage.filter?.allowedGuilds ?? [];
 
+    // DM channels + UserStore – nacitame raz
     const { dmChannels, UserStore } = useMemo(() => {
         let dmChannels: any[] = [];
         let UserStore: any = null;
@@ -57,6 +58,7 @@ export default () => {
         } catch { return []; }
     }, []);
 
+    // Meno DM kanala cez UserStore (nie z channel.recipients priamo)
     function getDMName(channel: any): string {
         if (channel.type === 1) {
             const rid = channel.recipients?.[0];
@@ -67,6 +69,7 @@ export default () => {
             }
             return channel.id;
         }
+        // Group DM
         return (
             channel.name ||
             channel.recipients?.slice(0, 3).map((r: any) => {
@@ -130,7 +133,7 @@ export default () => {
                 {/* DM accordion */}
                 <FormRow
                     label="DM Filter"
-                    subLabel={dmsMode === "all" ? "All DMs" : `${excludedDMs.length} excluded`}
+                    subLabel={dmsMode === "all" ? "All DMs" : `${allowedDMs.length} selected`}
                     trailing={
                         <RN.Text style={{ fontSize: 18, color: "#72767D" }}>
                             {dmsOpen ? "▾" : "›"}
@@ -162,9 +165,9 @@ export default () => {
                                 subLabel={getDMSub(channel)}
                                 trailing={
                                     <FormSwitch
-                                        value={!excludedDMs.includes(channel.id)}
+                                        value={allowedDMs.includes(channel.id)}
                                         onValueChange={() =>
-                                            setFilter({ excludedDMs: toggleInList(excludedDMs, channel.id) })
+                                            setFilter({ allowedDMs: toggleInList(allowedDMs, channel.id) })
                                         }
                                     />
                                 }
@@ -176,7 +179,7 @@ export default () => {
                 {/* Server accordion */}
                 <FormRow
                     label="Server Filter"
-                    subLabel={guildsMode === "all" ? "All servers" : `${excludedGuilds.length} excluded`}
+                    subLabel={guildsMode === "all" ? "All servers" : `${allowedGuilds.length} selected`}
                     trailing={
                         <RN.Text style={{ fontSize: 18, color: "#72767D" }}>
                             {guildsOpen ? "▾" : "›"}
@@ -207,9 +210,9 @@ export default () => {
                                 label={guild.name}
                                 trailing={
                                     <FormSwitch
-                                        value={!excludedGuilds.includes(guild.id)}
+                                        value={allowedGuilds.includes(guild.id)}
                                         onValueChange={() =>
-                                            setFilter({ excludedGuilds: toggleInList(excludedGuilds, guild.id) })
+                                            setFilter({ allowedGuilds: toggleInList(allowedGuilds, guild.id) })
                                         }
                                     />
                                 }
