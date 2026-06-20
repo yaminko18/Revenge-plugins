@@ -4,7 +4,7 @@ import { Forms } from "@vendetta/ui/components";
 import { useProxy } from "@vendetta/storage";
 import { storage } from "@vendetta/plugin";
 
-const { FormInput, FormRow, FormSwitch } = Forms;
+const { FormInput, FormRow, FormSwitch, FormSwitchRow } = Forms;
 const { useMemo, useState } = React;
 
 type Mode = "quotes" | "random" | "typed";
@@ -107,6 +107,7 @@ export default () => {
 
     return (
         <RN.ScrollView>
+        <RN.View>
 
             {/* ── NAMING MODE ── */}
             {sectionTitle("Naming Mode")}
@@ -151,17 +152,11 @@ export default () => {
                 onPress={() => setDmsOpen(o => !o)}
             />
             {dmsOpen && <>
-                <FormRow
+                <FormSwitchRow
                     label="All DMs"
                     subLabel="Plugin will be active in all DMs"
-                    trailing={
-                        <FormSwitch
-                            value={dmsMode === "all"}
-                            onValueChange={(v: boolean) =>
-                                setFilter("dmsMode", v ? "all" : "whitelist")
-                            }
-                        />
-                    }
+                    value={dmsMode === "all"}
+                    onValueChange={(v: boolean) => setFilter("dmsMode", v ? "all" : "whitelist")}
                 />
                 {dmChannels.map((channel: any) => (
                     <RN.View
@@ -197,17 +192,11 @@ export default () => {
                 onPress={() => setGuildsOpen(o => !o)}
             />
             {guildsOpen && <>
-                <FormRow
+                <FormSwitchRow
                     label="All Servers"
                     subLabel="Plugin will be active on all servers"
-                    trailing={
-                        <FormSwitch
-                            value={guildsMode === "all"}
-                            onValueChange={(v: boolean) =>
-                                setFilter("guildsMode", v ? "all" : "whitelist")
-                            }
-                        />
-                    }
+                    value={guildsMode === "all"}
+                    onValueChange={(v: boolean) => setFilter("guildsMode", v ? "all" : "whitelist")}
                 />
                 {guilds.map((guild: any) => (
                     <RN.View
@@ -230,6 +219,7 @@ export default () => {
                 ))}
             </>}
 
+        </RN.View>
         </RN.ScrollView>
     );
 };
