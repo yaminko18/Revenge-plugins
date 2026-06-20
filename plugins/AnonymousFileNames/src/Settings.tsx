@@ -6,7 +6,7 @@ import { storage } from "@vendetta/plugin";
 import { initFilter } from "./lib/filterHelper";
 
 const { FormInput, FormRow, FormSection, FormSwitch } = Forms;
-const { useMemo, useState } = React;
+const { useMemo, useState, useEffect } = React;
 
 type Mode = "quotes" | "random" | "typed";
 
@@ -37,7 +37,6 @@ export default () => {
     const allowedDMs:    string[] = storage.filter?.allowedDMs    ?? [];
     const allowedGuilds: string[] = storage.filter?.allowedGuilds ?? [];
 
-    // DM channels + UserStore – nacitame raz
     const { dmChannels, UserStore } = useMemo(() => {
         let dmChannels: any[] = [];
         let UserStore: any = null;
@@ -58,7 +57,23 @@ export default () => {
         } catch { return []; }
     }, []);
 
-    // Meno DM kanala cez UserStore (nie z channel.recipients priamo)
+    // Pri otvoreni nastaveni automaticky pridaj nove DMs a servery do zoznamov
+    useEffect(() => {
+        const currentDMs = storage.filter?.allowedDMs ?? [];
+        const missingDMs = dmChannels
+            .map((c: any) => c.id)
+            .filter((id: string) => !currentDMs.includes(id));
+        if (missingDMs.length > 0)
+            setFilter({ allowedDMs: [...currentDMs, ...missingDMs] });
+
+        const currentGuilds = storage.filter?.allowedGuilds ?? [];
+        const missingGuilds = guilds
+            .map((g: any) => g.id)
+            .filter((id: string) => !currentGuilds.includes(id));
+        if (missingGuilds.length > 0)
+            setFilter({ allowedGuilds: [...currentGuilds, ...missingGuilds] });
+    }, []);
+
     function getDMName(channel: any): string {
         if (channel.type === 1) {
             const rid = channel.recipients?.[0];
@@ -69,7 +84,6 @@ export default () => {
             }
             return channel.id;
         }
-        // Group DM
         return (
             channel.name ||
             channel.recipients?.slice(0, 3).map((r: any) => {
