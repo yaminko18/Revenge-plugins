@@ -5,10 +5,6 @@ import randomString from "./lib/randomString";
 import { getTypePrefix, FilePrefix } from "./lib/typeFileName";
 import { initFilter, shouldProcess } from "./lib/filterHelper";
 
-storage.nameLength ??= 8;
-storage.mode ??= "quotes";
-initFilter();
-
 const CZECH_QUOTES = [
     "proletáři všech zemí, polibte mi prdel",
     "kde udělali soudruzi z NDR chybu",
@@ -148,6 +144,12 @@ try {
         );
     }
 } catch {}
+
+export const onLoad = () => {
+    storage.nameLength ??= 8;
+    storage.mode ??= "quotes";
+    initFilter();
+};
 
 export const onUnload = () => {
     for (const unpatch of unpatches) {
