@@ -15,8 +15,8 @@ const MODES: { value: Mode; label: string; sub: string }[] = [
     { value: "typed",  label: "By File Type",  sub: "image0, video0, file0 based on file type" },
 ];
 
-function setFilter(patch: object) {
-    storage.filter = { ...storage.filter, ...patch };
+function setFilter(key: string, value: any) {
+    storage.filter[key] = value;
 }
 
 function toggleInList(list: string[], id: string): string[] {
@@ -144,7 +144,7 @@ export default () => {
                             <FormSwitch
                                 value={dmsMode === "all"}
                                 onValueChange={(v: boolean) =>
-                                    setFilter({ dmsMode: v ? "all" : "whitelist" })
+                                    setFilter("dmsMode", v ? "all" : "whitelist")
                                 }
                             />
                         }
@@ -162,7 +162,7 @@ export default () => {
                                     <FormSwitch
                                         value={!excludedDMs.includes(channel.id)}
                                         onValueChange={() =>
-                                            setFilter({ excludedDMs: toggleInList(excludedDMs, channel.id) })
+                                            setFilter("excludedDMs", toggleInList(excludedDMs, channel.id))
                                         }
                                     />
                                 }
@@ -190,7 +190,7 @@ export default () => {
                             <FormSwitch
                                 value={guildsMode === "all"}
                                 onValueChange={(v: boolean) =>
-                                    setFilter({ guildsMode: v ? "all" : "whitelist" })
+                                    setFilter("guildsMode", v ? "all" : "whitelist")
                                 }
                             />
                         }
@@ -207,7 +207,7 @@ export default () => {
                                     <FormSwitch
                                         value={!excludedGuilds.includes(guild.id)}
                                         onValueChange={() =>
-                                            setFilter({ excludedGuilds: toggleInList(excludedGuilds, guild.id) })
+                                            setFilter("excludedGuilds", toggleInList(excludedGuilds, guild.id))
                                         }
                                     />
                                 }
