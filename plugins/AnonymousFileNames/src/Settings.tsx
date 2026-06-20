@@ -3,7 +3,6 @@ import { findByProps } from "@vendetta/metro";
 import { Forms } from "@vendetta/ui/components";
 import { useProxy } from "@vendetta/storage";
 import { storage } from "@vendetta/plugin";
-import { initFilter } from "./lib/filterHelper";
 
 const { FormInput, FormRow, FormSection, FormSwitch } = Forms;
 const { useMemo, useState } = React;
@@ -26,7 +25,6 @@ function toggleInList(list: string[], id: string): string[] {
 
 export default () => {
     useProxy(storage);
-    initFilter();
 
     const [dmsOpen,    setDmsOpen]    = useState(false);
     const [guildsOpen, setGuildsOpen] = useState(false);
