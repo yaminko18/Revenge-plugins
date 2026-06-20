@@ -7,8 +7,8 @@ export function initFilter() {
     storage.filter ??= {
         dmsMode:       "all" as FilterMode,
         guildsMode:    "all" as FilterMode,
-        allowedDMs:    [] as string[],
-        allowedGuilds: [] as string[],
+        excludedDMs:    [] as string[],
+        excludedGuilds: [] as string[],
     };
 }
 
@@ -27,7 +27,7 @@ export function shouldProcess(): boolean {
     const filter = storage.filter;
     if (!filter) return true;
 
-    const { dmsMode, guildsMode, allowedDMs, allowedGuilds } = filter;
+    const { dmsMode, guildsMode, excludedDMs, excludedGuilds } = filter;
 
     // Ak su obe "all", ani netreba zistovat aktualny kanal
     if (dmsMode === "all" && guildsMode === "all") return true;
@@ -45,11 +45,11 @@ export function shouldProcess(): boolean {
 
     if (isDM) {
         if (dmsMode === "all") return true;
-        return ((allowedDMs as string[]) ?? []).includes(channelId);
+        return !((excludedDMs as string[]) ?? []).includes(channelId);
     } else {
         if (guildsMode === "all") return true;
         const guildId = SelectedGuildStore?.getGuildId?.();
         if (!guildId) return true;
-        return ((allowedGuilds as string[]) ?? []).includes(guildId);
+        return !((excludedGuilds as string[]) ?? []).includes(guildId);
     }
 }
