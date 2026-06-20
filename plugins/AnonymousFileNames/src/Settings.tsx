@@ -11,32 +11,10 @@ const { useMemo, useState } = React;
 type Mode = "quotes" | "random" | "typed";
 
 const MODES: { value: Mode; label: string; sub: string }[] = [
-    { value: "quotes", label: "Movie Quotes",  sub: "České filmové hlášky ako názov súboru" },
-    { value: "random", label: "Random String", sub: "Náhodný alfanumerický reťazec" },
-    { value: "typed",  label: "By File Type",  sub: "image0, video0, file0 podľa typu súboru" },
+    { value: "quotes", label: "Movie Quotes",  sub: "Czech movie quotes as filename" },
+    { value: "random", label: "Random String", sub: "Random alphanumeric string" },
+    { value: "typed",  label: "By File Type",  sub: "image0, video0, file0 based on file type" },
 ];
-
-function getDMName(channel: any): string {
-    if (channel.type === 1) {
-        const u = channel.recipients?.[0];
-        return u?.globalName ?? u?.username ?? channel.id;
-    }
-    return (
-        channel.name ||
-        channel.recipients?.slice(0, 3).map((u: any) => u.username).join(", ") ||
-        channel.id
-    );
-}
-
-function getDMSub(channel: any): string | undefined {
-    if (channel.type === 1) {
-        const u = channel.recipients?.[0];
-        if (u?.globalName && u?.username && u.globalName !== u.username)
-            return `@${u.username}`;
-    }
-    if (channel.type === 3) return "Group DM";
-    return undefined;
-}
 
 function setFilter(patch: object) {
     storage.filter = { ...storage.filter, ...patch };
@@ -59,13 +37,18 @@ export default () => {
     const allowedDMs:    string[] = storage.filter?.allowedDMs    ?? [];
     const allowedGuilds: string[] = storage.filter?.allowedGuilds ?? [];
 
-    const dmChannels = useMemo(() => {
+    // DM channels + UserStore – nacitame raz
+    const { dmChannels, UserStore } = useMemo(() => {
+        let dmChannels: any[] = [];
+        let UserStore: any = null;
         try {
-            const store = findByProps("getSortedPrivateChannels");
-            return (store?.getSortedPrivateChannels?.() ?? []).filter(
+            const sortedStore = findByProps("getSortedPrivateChannels");
+            dmChannels = (sortedStore?.getSortedPrivateChannels?.() ?? []).filter(
                 (c: any) => c.type === 1 || c.type === 3
-            ) as any[];
-        } catch { return []; }
+            );
+            UserStore = findByProps("getUser", "getCurrentUser");
+        } catch {}
+        return { dmChannels, UserStore };
     }, []);
 
     const guilds = useMemo(() => {
@@ -74,6 +57,43 @@ export default () => {
             return Object.values(store?.getGuilds?.() ?? {}) as any[];
         } catch { return []; }
     }, []);
+
+    // Meno DM kanala cez UserStore (nie z channel.recipients priamo)
+    function getDMName(channel: any): string {
+        if (channel.type === 1) {
+            const rid = channel.recipients?.[0];
+            const uid = typeof rid === "string" ? rid : rid?.id;
+            if (uid && UserStore) {
+                const user = UserStore.getUser(uid);
+                return user?.globalName ?? user?.username ?? uid;
+            }
+            return channel.id;
+        }
+        // Group DM
+        return (
+            channel.name ||
+            channel.recipients?.slice(0, 3).map((r: any) => {
+                const uid = typeof r === "string" ? r : r?.id;
+                const user = uid && UserStore ? UserStore.getUser(uid) : null;
+                return user?.username ?? uid ?? "?";
+            }).join(", ") ||
+            channel.id
+        );
+    }
+
+    function getDMSub(channel: any): string | undefined {
+        if (channel.type === 1) {
+            const rid = channel.recipients?.[0];
+            const uid = typeof rid === "string" ? rid : rid?.id;
+            if (uid && UserStore) {
+                const user = UserStore.getUser(uid);
+                if (user?.globalName && user?.username && user.globalName !== user.username)
+                    return `@${user.username}`;
+            }
+        }
+        if (channel.type === 3) return "Group DM";
+        return undefined;
+    }
 
     return (
         <RN.ScrollView>
@@ -124,7 +144,7 @@ export default () => {
                 {dmsOpen && <>
                     <FormRow
                         label="All DMs"
-                        subLabel="Plugin bude aktívny vo všetkých DMs"
+                        subLabel="Plugin will be active in all DMs"
                         trailing={
                             <FormSwitch
                                 value={dmsMode === "all"}
@@ -135,19 +155,24 @@ export default () => {
                         }
                     />
                     {dmChannels.map((channel: any) => (
-                        <FormRow
+                        <RN.View
                             key={channel.id}
-                            label={getDMName(channel)}
-                            subLabel={getDMSub(channel)}
-                            trailing={
-                                <FormSwitch
-                                    value={allowedDMs.includes(channel.id)}
-                                    onValueChange={() =>
-                                        setFilter({ allowedDMs: toggleInList(allowedDMs, channel.id) })
-                                    }
-                                />
-                            }
-                        />
+                            style={dmsMode === "all" ? { opacity: 0.35 } : undefined}
+                            pointerEvents={dmsMode === "all" ? "none" : "auto"}
+                        >
+                            <FormRow
+                                label={getDMName(channel)}
+                                subLabel={getDMSub(channel)}
+                                trailing={
+                                    <FormSwitch
+                                        value={allowedDMs.includes(channel.id)}
+                                        onValueChange={() =>
+                                            setFilter({ allowedDMs: toggleInList(allowedDMs, channel.id) })
+                                        }
+                                    />
+                                }
+                            />
+                        </RN.View>
                     ))}
                 </>}
 
@@ -165,7 +190,7 @@ export default () => {
                 {guildsOpen && <>
                     <FormRow
                         label="All Servers"
-                        subLabel="Plugin bude aktívny na všetkých serveroch"
+                        subLabel="Plugin will be active on all servers"
                         trailing={
                             <FormSwitch
                                 value={guildsMode === "all"}
@@ -176,18 +201,23 @@ export default () => {
                         }
                     />
                     {guilds.map((guild: any) => (
-                        <FormRow
+                        <RN.View
                             key={guild.id}
-                            label={guild.name}
-                            trailing={
-                                <FormSwitch
-                                    value={allowedGuilds.includes(guild.id)}
-                                    onValueChange={() =>
-                                        setFilter({ allowedGuilds: toggleInList(allowedGuilds, guild.id) })
-                                    }
-                                />
-                            }
-                        />
+                            style={guildsMode === "all" ? { opacity: 0.35 } : undefined}
+                            pointerEvents={guildsMode === "all" ? "none" : "auto"}
+                        >
+                            <FormRow
+                                label={guild.name}
+                                trailing={
+                                    <FormSwitch
+                                        value={allowedGuilds.includes(guild.id)}
+                                        onValueChange={() =>
+                                            setFilter({ allowedGuilds: toggleInList(allowedGuilds, guild.id) })
+                                        }
+                                    />
+                                }
+                            />
+                        </RN.View>
                     ))}
                 </>}
 
