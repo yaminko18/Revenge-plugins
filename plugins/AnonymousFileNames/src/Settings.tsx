@@ -6,39 +6,17 @@ import { storage } from "@vendetta/plugin";
 import { initFilter } from "./lib/filterHelper";
 
 const { FormInput, FormRow, FormSection, FormSwitch } = Forms;
-const { useMemo } = React;
+const { useMemo, useState } = React;
 
 type Mode = "quotes" | "random" | "typed";
-type FilterMode = "all" | "whitelist";
 
 const MODES: { value: Mode; label: string; sub: string }[] = [
-    { value: "quotes", label: "Movie Quotes",  sub: "České filmové hlášky ako názov súboru" },
-    { value: "random", label: "Random String", sub: "Náhodný alfanumerický reťazec" },
-    { value: "typed",  label: "By File Type",  sub: "image0, video0, file0 podľa typu súboru" },
+    { value: "quotes", label: "Movie Quotes",  sub: "Czech movie quotes as filename" },
+    { value: "random", label: "Random String", sub: "Random alphanumeric string" },
+    { value: "typed",  label: "By File Type",  sub: "image0, video0, file0 based on file type" },
 ];
 
-function getDMName(channel: any): string {
-    if (channel.type === 1) {
-        const u = channel.recipients?.[0];
-        return u?.globalName ?? u?.username ?? channel.id;
-    }
-    // Group DM (type 3)
-    return channel.name
-        || channel.recipients?.slice(0, 3).map((u: any) => u.username).join(", ")
-        || channel.id;
-}
-
-function getDMSub(channel: any): string | undefined {
-    if (channel.type === 1) {
-        const u = channel.recipients?.[0];
-        if (u?.globalName && u?.username && u.globalName !== u.username)
-            return `@${u.username}`;
-    }
-    if (channel.type === 3) return "Group DM";
-    return undefined;
-}
-
-function setFilter(patch: Partial<typeof storage.filter>) {
+function setFilter(patch: object) {
     storage.filter = { ...storage.filter, ...patch };
 }
 
@@ -50,20 +28,26 @@ export default () => {
     useProxy(storage);
     initFilter();
 
-    const mode: Mode = storage.mode ?? "quotes";
-    const dmsMode: FilterMode    = storage.filter?.dmsMode    ?? "all";
-    const guildsMode: FilterMode = storage.filter?.guildsMode ?? "all";
-    const allowedDMs:    string[] = storage.filter?.allowedDMs    ?? [];
-    const allowedGuilds: string[] = storage.filter?.allowedGuilds ?? [];
+    const [dmsOpen,    setDmsOpen]    = useState(false);
+    const [guildsOpen, setGuildsOpen] = useState(false);
 
-    // Nacitame zoznam DMs a serverov raz pri mounti
-    const dmChannels = useMemo(() => {
+    const mode: Mode      = storage.mode ?? "quotes";
+    const dmsMode         = storage.filter?.dmsMode    ?? "all";
+    const guildsMode      = storage.filter?.guildsMode ?? "all";
+    const excludedDMs:    string[] = storage.filter?.excludedDMs    ?? [];
+    const excludedGuilds: string[] = storage.filter?.excludedGuilds ?? [];
+
+    const { dmChannels, UserStore } = useMemo(() => {
+        let dmChannels: any[] = [];
+        let UserStore: any = null;
         try {
-            const store = findByProps("getSortedPrivateChannels");
-            return (store?.getSortedPrivateChannels?.() ?? []).filter(
+            const sortedStore = findByProps("getSortedPrivateChannels");
+            dmChannels = (sortedStore?.getSortedPrivateChannels?.() ?? []).filter(
                 (c: any) => c.type === 1 || c.type === 3
-            ) as any[];
-        } catch { return []; }
+            );
+            UserStore = findByProps("getUser", "getCurrentUser");
+        } catch {}
+        return { dmChannels, UserStore };
     }, []);
 
     const guilds = useMemo(() => {
@@ -72,6 +56,41 @@ export default () => {
             return Object.values(store?.getGuilds?.() ?? {}) as any[];
         } catch { return []; }
     }, []);
+
+    function getDMName(channel: any): string {
+        if (channel.type === 1) {
+            const rid = channel.recipients?.[0];
+            const uid = typeof rid === "string" ? rid : rid?.id;
+            if (uid && UserStore) {
+                const user = UserStore.getUser(uid);
+                return user?.globalName ?? user?.username ?? uid;
+            }
+            return channel.id;
+        }
+        return (
+            channel.name ||
+            channel.recipients?.slice(0, 3).map((r: any) => {
+                const uid = typeof r === "string" ? r : r?.id;
+                const user = uid && UserStore ? UserStore.getUser(uid) : null;
+                return user?.username ?? uid ?? "?";
+            }).join(", ") ||
+            channel.id
+        );
+    }
+
+    function getDMSub(channel: any): string | undefined {
+        if (channel.type === 1) {
+            const rid = channel.recipients?.[0];
+            const uid = typeof rid === "string" ? rid : rid?.id;
+            if (uid && UserStore) {
+                const user = UserStore.getUser(uid);
+                if (user?.globalName && user?.username && user.globalName !== user.username)
+                    return `@${user.username}`;
+            }
+        }
+        if (channel.type === 3) return "Group DM";
+        return undefined;
+    }
 
     return (
         <RN.ScrollView>
@@ -105,65 +124,100 @@ export default () => {
                 </FormSection>
             )}
 
-            {/* ── DM FILTER ── */}
-            <FormSection title="DM FILTER">
-                <FormRow
-                    label="All DMs"
-                    subLabel="Plugin bude aktívny vo všetkých DMs"
-                    trailing={
-                        <FormSwitch
-                            value={dmsMode === "all"}
-                            onValueChange={(v: boolean) =>
-                                setFilter({ dmsMode: v ? "all" : "whitelist" })
-                            }
-                        />
-                    }
-                />
-                {dmsMode === "whitelist" && dmChannels.map((channel: any) => (
-                    <FormRow
-                        key={channel.id}
-                        label={getDMName(channel)}
-                        subLabel={getDMSub(channel)}
-                        trailing={
-                            <FormSwitch
-                                value={allowedDMs.includes(channel.id)}
-                                onValueChange={() =>
-                                    setFilter({ allowedDMs: toggleInList(allowedDMs, channel.id) })
-                                }
-                            />
-                        }
-                    />
-                ))}
-            </FormSection>
+            {/* ── FILTERS ── */}
+            <FormSection title="FILTERS">
 
-            {/* ── SERVER FILTER ── */}
-            <FormSection title="SERVER FILTER">
+                {/* DM accordion */}
                 <FormRow
-                    label="All Servers"
-                    subLabel="Plugin bude aktívny na všetkých serveroch"
+                    label="DM Filter"
+                    subLabel={dmsMode === "all" ? "All DMs" : `${excludedDMs.length} excluded`}
                     trailing={
-                        <FormSwitch
-                            value={guildsMode === "all"}
-                            onValueChange={(v: boolean) =>
-                                setFilter({ guildsMode: v ? "all" : "whitelist" })
-                            }
-                        />
+                        <RN.Text style={{ fontSize: 18, color: "#72767D" }}>
+                            {dmsOpen ? "▾" : "›"}
+                        </RN.Text>
                     }
+                    onPress={() => setDmsOpen(o => !o)}
                 />
-                {guildsMode === "whitelist" && guilds.map((guild: any) => (
+                {dmsOpen && <>
                     <FormRow
-                        key={guild.id}
-                        label={guild.name}
+                        label="All DMs"
+                        subLabel="Plugin will be active in all DMs"
                         trailing={
                             <FormSwitch
-                                value={allowedGuilds.includes(guild.id)}
-                                onValueChange={() =>
-                                    setFilter({ allowedGuilds: toggleInList(allowedGuilds, guild.id) })
+                                value={dmsMode === "all"}
+                                onValueChange={(v: boolean) =>
+                                    setFilter({ dmsMode: v ? "all" : "whitelist" })
                                 }
                             />
                         }
                     />
-                ))}
+                    {dmChannels.map((channel: any) => (
+                        <RN.View
+                            key={channel.id}
+                            style={dmsMode === "all" ? { opacity: 0.35 } : undefined}
+                            pointerEvents={dmsMode === "all" ? "none" : "auto"}
+                        >
+                            <FormRow
+                                label={getDMName(channel)}
+                                subLabel={getDMSub(channel)}
+                                trailing={
+                                    <FormSwitch
+                                        value={!excludedDMs.includes(channel.id)}
+                                        onValueChange={() =>
+                                            setFilter({ excludedDMs: toggleInList(excludedDMs, channel.id) })
+                                        }
+                                    />
+                                }
+                            />
+                        </RN.View>
+                    ))}
+                </>}
+
+                {/* Server accordion */}
+                <FormRow
+                    label="Server Filter"
+                    subLabel={guildsMode === "all" ? "All servers" : `${excludedGuilds.length} excluded`}
+                    trailing={
+                        <RN.Text style={{ fontSize: 18, color: "#72767D" }}>
+                            {guildsOpen ? "▾" : "›"}
+                        </RN.Text>
+                    }
+                    onPress={() => setGuildsOpen(o => !o)}
+                />
+                {guildsOpen && <>
+                    <FormRow
+                        label="All Servers"
+                        subLabel="Plugin will be active on all servers"
+                        trailing={
+                            <FormSwitch
+                                value={guildsMode === "all"}
+                                onValueChange={(v: boolean) =>
+                                    setFilter({ guildsMode: v ? "all" : "whitelist" })
+                                }
+                            />
+                        }
+                    />
+                    {guilds.map((guild: any) => (
+                        <RN.View
+                            key={guild.id}
+                            style={guildsMode === "all" ? { opacity: 0.35 } : undefined}
+                            pointerEvents={guildsMode === "all" ? "none" : "auto"}
+                        >
+                            <FormRow
+                                label={guild.name}
+                                trailing={
+                                    <FormSwitch
+                                        value={!excludedGuilds.includes(guild.id)}
+                                        onValueChange={() =>
+                                            setFilter({ excludedGuilds: toggleInList(excludedGuilds, guild.id) })
+                                        }
+                                    />
+                                }
+                            />
+                        </RN.View>
+                    ))}
+                </>}
+
             </FormSection>
 
         </RN.ScrollView>
