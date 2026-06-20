@@ -4,7 +4,7 @@ import { Forms } from "@vendetta/ui/components";
 import { useProxy } from "@vendetta/storage";
 import { storage } from "@vendetta/plugin";
 
-const { FormInput, FormRow, FormSection, FormSwitch } = Forms;
+const { FormInput, FormRow, FormSwitch } = Forms;
 const { useMemo, useState } = React;
 
 type Mode = "quotes" | "random" | "typed";
@@ -14,6 +14,21 @@ const MODES: { value: Mode; label: string; sub: string }[] = [
     { value: "random", label: "Random String", sub: "Random alphanumeric string" },
     { value: "typed",  label: "By File Type",  sub: "image0, video0, file0 based on file type" },
 ];
+
+const sectionTitle = (text: string) => (
+    <RN.Text style={{
+        color: "#8e9297",
+        fontSize: 12,
+        fontWeight: "700",
+        letterSpacing: 0.5,
+        marginHorizontal: 16,
+        marginTop: 20,
+        marginBottom: 4,
+        textTransform: "uppercase",
+    }}>
+        {text}
+    </RN.Text>
+);
 
 function setFilter(key: string, value: any) {
     storage.filter[key] = value;
@@ -94,129 +109,126 @@ export default () => {
         <RN.ScrollView>
 
             {/* ── NAMING MODE ── */}
-            <FormSection title="NAMING MODE">
-                {MODES.map(({ value, label, sub }) => (
-                    <FormRow
-                        key={value}
-                        label={label}
-                        subLabel={sub}
-                        trailing={
-                            <RN.Text style={{ fontSize: 20, color: mode === value ? "#5865F2" : "#72767D" }}>
-                                {mode === value ? "●" : "○"}
-                            </RN.Text>
-                        }
-                        onPress={() => (storage.mode = value)}
-                    />
-                ))}
-            </FormSection>
+            {sectionTitle("Naming Mode")}
+            {MODES.map(({ value, label, sub }) => (
+                <FormRow
+                    key={value}
+                    label={label}
+                    subLabel={sub}
+                    trailing={
+                        <RN.Text style={{ fontSize: 20, color: mode === value ? "#5865F2" : "#72767D" }}>
+                            {mode === value ? "●" : "○"}
+                        </RN.Text>
+                    }
+                    onPress={() => (storage.mode = value)}
+                />
+            ))}
 
-            {mode === "random" && (
-                <FormSection title="RANDOM STRING">
-                    <FormInput
-                        title="FILENAME LENGTH"
-                        keyboardType="numeric"
-                        placeholder="8"
-                        value={(storage.nameLength ?? 8).toString()}
-                        onChange={(v: string) => (storage.nameLength = v.replace(/[^0-9]/g, ""))}
-                    />
-                </FormSection>
-            )}
+            {/* ── RANDOM STRING ── */}
+            {mode === "random" && <>
+                {sectionTitle("Random String")}
+                <FormInput
+                    title="FILENAME LENGTH"
+                    keyboardType="numeric"
+                    placeholder="8"
+                    value={(storage.nameLength ?? 8).toString()}
+                    onChange={(v: string) => (storage.nameLength = v.replace(/[^0-9]/g, ""))}
+                />
+            </>}
 
             {/* ── FILTERS ── */}
-            <FormSection title="FILTERS">
+            {sectionTitle("Filters")}
 
-                {/* DM accordion */}
+            {/* DM accordion */}
+            <FormRow
+                label="DM Filter"
+                subLabel={dmsMode === "all" ? "All DMs" : `${excludedDMs.length} excluded`}
+                trailing={
+                    <RN.Text style={{ fontSize: 18, color: "#72767D" }}>
+                        {dmsOpen ? "▾" : "›"}
+                    </RN.Text>
+                }
+                onPress={() => setDmsOpen(o => !o)}
+            />
+            {dmsOpen && <>
                 <FormRow
-                    label="DM Filter"
-                    subLabel={dmsMode === "all" ? "All DMs" : `${excludedDMs.length} excluded`}
+                    label="All DMs"
+                    subLabel="Plugin will be active in all DMs"
                     trailing={
-                        <RN.Text style={{ fontSize: 18, color: "#72767D" }}>
-                            {dmsOpen ? "▾" : "›"}
-                        </RN.Text>
+                        <FormSwitch
+                            value={dmsMode === "all"}
+                            onValueChange={(v: boolean) =>
+                                setFilter("dmsMode", v ? "all" : "whitelist")
+                            }
+                        />
                     }
-                    onPress={() => setDmsOpen(o => !o)}
                 />
-                {dmsOpen && <>
-                    <FormRow
-                        label="All DMs"
-                        subLabel="Plugin will be active in all DMs"
-                        trailing={
-                            <FormSwitch
-                                value={dmsMode === "all"}
-                                onValueChange={(v: boolean) =>
-                                    setFilter("dmsMode", v ? "all" : "whitelist")
-                                }
-                            />
-                        }
-                    />
-                    {dmChannels.map((channel: any) => (
-                        <RN.View
-                            key={channel.id}
-                            style={dmsMode === "all" ? { opacity: 0.35 } : undefined}
-                            pointerEvents={dmsMode === "all" ? "none" : "auto"}
-                        >
-                            <FormRow
-                                label={getDMName(channel)}
-                                subLabel={getDMSub(channel)}
-                                trailing={
-                                    <FormSwitch
-                                        value={!excludedDMs.includes(channel.id)}
-                                        onValueChange={() =>
-                                            setFilter("excludedDMs", toggleInList(excludedDMs, channel.id))
-                                        }
-                                    />
-                                }
-                            />
-                        </RN.View>
-                    ))}
-                </>}
+                {dmChannels.map((channel: any) => (
+                    <RN.View
+                        key={channel.id}
+                        style={dmsMode === "all" ? { opacity: 0.35 } : undefined}
+                        pointerEvents={dmsMode === "all" ? "none" : "auto"}
+                    >
+                        <FormRow
+                            label={getDMName(channel)}
+                            subLabel={getDMSub(channel)}
+                            trailing={
+                                <FormSwitch
+                                    value={!excludedDMs.includes(channel.id)}
+                                    onValueChange={() =>
+                                        setFilter("excludedDMs", toggleInList(excludedDMs, channel.id))
+                                    }
+                                />
+                            }
+                        />
+                    </RN.View>
+                ))}
+            </>}
 
-                {/* Server accordion */}
+            {/* Server accordion */}
+            <FormRow
+                label="Server Filter"
+                subLabel={guildsMode === "all" ? "All servers" : `${excludedGuilds.length} excluded`}
+                trailing={
+                    <RN.Text style={{ fontSize: 18, color: "#72767D" }}>
+                        {guildsOpen ? "▾" : "›"}
+                    </RN.Text>
+                }
+                onPress={() => setGuildsOpen(o => !o)}
+            />
+            {guildsOpen && <>
                 <FormRow
-                    label="Server Filter"
-                    subLabel={guildsMode === "all" ? "All servers" : `${excludedGuilds.length} excluded`}
+                    label="All Servers"
+                    subLabel="Plugin will be active on all servers"
                     trailing={
-                        <RN.Text style={{ fontSize: 18, color: "#72767D" }}>
-                            {guildsOpen ? "▾" : "›"}
-                        </RN.Text>
+                        <FormSwitch
+                            value={guildsMode === "all"}
+                            onValueChange={(v: boolean) =>
+                                setFilter("guildsMode", v ? "all" : "whitelist")
+                            }
+                        />
                     }
-                    onPress={() => setGuildsOpen(o => !o)}
                 />
-                {guildsOpen && <>
-                    <FormRow
-                        label="All Servers"
-                        subLabel="Plugin will be active on all servers"
-                        trailing={
-                            <FormSwitch
-                                value={guildsMode === "all"}
-                                onValueChange={(v: boolean) =>
-                                    setFilter("guildsMode", v ? "all" : "whitelist")
-                                }
-                            />
-                        }
-                    />
-                    {guilds.map((guild: any) => (
-                        <RN.View
-                            key={guild.id}
-                            style={guildsMode === "all" ? { opacity: 0.35 } : undefined}
-                            pointerEvents={guildsMode === "all" ? "none" : "auto"}
-                        >
-                            <FormRow
-                                label={guild.name}
-                                trailing={
-                                    <FormSwitch
-                                        value={!excludedGuilds.includes(guild.id)}
-                                        onValueChange={() =>
-                                            setFilter("excludedGuilds", toggleInList(excludedGuilds, guild.id))
-                                        }
-                                    />
-                                }
-                            />
-                        </RN.View>
-                    ))}
-                </>}
-
-            </FormSection>
+                {guilds.map((guild: any) => (
+                    <RN.View
+                        key={guild.id}
+                        style={guildsMode === "all" ? { opacity: 0.35 } : undefined}
+                        pointerEvents={guildsMode === "all" ? "none" : "auto"}
+                    >
+                        <FormRow
+                            label={guild.name}
+                            trailing={
+                                <FormSwitch
+                                    value={!excludedGuilds.includes(guild.id)}
+                                    onValueChange={() =>
+                                        setFilter("excludedGuilds", toggleInList(excludedGuilds, guild.id))
+                                    }
+                                />
+                            }
+                        />
+                    </RN.View>
+                ))}
+            </>}
 
         </RN.ScrollView>
     );
