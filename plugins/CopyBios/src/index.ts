@@ -10,6 +10,8 @@
 
             if (h.rowType !== 1 || !e?.content) return;
             if (!e.embeds?.length && !e.attachments?.length) return;
+            if (e._labeled) return;
+            e._labeled = true;
 
             const nodes = [];
 
@@ -31,14 +33,18 @@
             }
 
             if (e.attachments?.length) {
-                if (nodes.length > 0)
-                    nodes.push({ type: "text", content: "\n" });
+                const attNodes = [];
 
                 for (let i = 0; i < e.attachments.length; i++) {
-                    nodes.push({ type: "text", content: e.attachments[i].filename });
+                    attNodes.push({ type: "text", content: e.attachments[i].filename });
                     if (i < e.attachments.length - 1)
-                        nodes.push({ type: "text", content: "\n" });
+                        attNodes.push({ type: "text", content: "\n" });
                 }
+
+                if (e.content.length > 0 || nodes.length > 0)
+                    attNodes.push({ type: "text", content: "\n" });
+
+                e.content.unshift(...attNodes);
             }
 
             if (nodes.length > 0)
