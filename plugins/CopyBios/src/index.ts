@@ -1,58 +1,51 @@
-declare const vendetta: any;
+(function(o, u, f) {
+    "use strict";
+    const p = u.findByName("RowManager");
+    let a;
 
-const RowManager = vendetta.metro.findByName("RowManager");
-let unpatch: (() => void) | undefined;
+    const l = function() {
+        a = f.after("generate", p.prototype, function(d, g) {
+            let [h] = d;
+            let { message: e } = g;
 
-const getFilename = (url: string): string => {
-  try {
-    const path = new URL(url).pathname;
-    return decodeURIComponent(path.split("/").pop()) || url;
-  } catch {
-    return url;
-  }
-};
+            if (h.rowType !== 1 || !e?.content) return;
+            if (!e.embeds?.length && !e.attachments?.length) return;
 
-export function onLoad() {
-  const MessageStore = vendetta.metro.findByProps("getMessage", "getMessages");
+            const nodes = [];
 
-  unpatch = vendetta.patcher.after("generate", RowManager.prototype, function(d: any, g: any) {
-    let [h] = d, { message: e } = g;
-    if (h.rowType !== 1 || !e?.embeds || !e?.content) return;
+            if (e.embeds?.length) {
+                const urls = [];
+                for (const embed of e.embeds)
+                    if (embed.type === "image" || embed.type === "gifv")
+                        urls.push(embed.url);
 
-    let r = 0;
-    const n: string[] = [];
-    for (const t of e.embeds)
-      (t.type == "image" || t.type == "gifv") && (r++, n.push(t.url));
+                for (let i = 0; i < urls.length; i++) {
+                    nodes.push({
+                        type: "link",
+                        content: [{ type: "text", content: urls[i] }],
+                        target: urls[i]
+                    });
+                    if (i < urls.length - 1)
+                        nodes.push({ type: "text", content: "\n" });
+                }
+            }
 
-    const c: any[] = [];
-    for (let t = 0; t < n.length; t++) {
-      const s = n[t];
-      c.push({ type: "link", content: [{ type: "text", content: s }], target: s });
-      if (t < n.length - 1) c.push({ type: "text", content: "\n" });
-    }
+            if (e.attachments?.length) {
+                if (nodes.length > 0)
+                    nodes.push({ type: "text", content: "\n" });
 
-    if (e.content.length == 0 && r > 0) e.content.push(...c);
+                for (let i = 0; i < e.attachments.length; i++) {
+                    nodes.push({ type: "text", content: e.attachments[i].filename });
+                    if (i < e.attachments.length - 1)
+                        nodes.push({ type: "text", content: "\n" });
+                }
+            }
 
-    const fullMessage = MessageStore?.getMessage(e.channel_id, e.id);
-    const attachments = fullMessage?.attachments ?? [];
+            if (nodes.length > 0)
+                e.content.push(...nodes);
+        });
+    };
 
-    const attachmentNodes: any[] = attachments
-      .filter((t: any) => t.content_type?.startsWith("image/"))
-      .filter((t: any) => t.url)
-      .map((t: any) => ({ type: "text", content: t.filename ?? getFilename(t.url) }));
-
-    if (attachmentNodes.length > 0) {
-      if (e.content.length > 0)
-        e.content.push({ type: "text", content: "\n" });
-      e.content.push(...attachmentNodes.flatMap((node: any, i: number) =>
-        i < attachmentNodes.length - 1
-          ? [node, { type: "text", content: "\n" }]
-          : [node]
-      ));
-    }
-  });
-}
-
-export function onUnload() {
-  unpatch?.();
-}
+    const i = function() { a?.(); };
+    return o.onLoad = l, o.onUnload = i, o;
+})({}, vendetta.metro, vendetta.patcher);
