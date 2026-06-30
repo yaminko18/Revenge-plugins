@@ -13,7 +13,7 @@ const czechToSlovakMonths = {
     "červen": "jún", "června": "júna", "červnu": "júni", "červnem": "júnom",
     "červenec": "júl", "července": "júla", "červenci": "júli", "červencem": "júlom",
     "srpen": "august", "srpna": "augusta", "srpnu": "auguste", "srpnem": "augustom",
-    "v září": "v septembri", "do září": "do septembra", "ze září": "zo septembra", "září": "september",
+    "září": "september",
     "říjen": "október", "října": "októbra", "říjnu": "októbri", "říjnem": "októbrom",
     "v listopadu": "v novembri", "listopadu": "novembra", "listopad": "november", "listopadem": "novembrom",
     "prosinec": "december", "prosince": "decembra", "prosinci": "decembri", "prosincem": "decembrom",
@@ -25,8 +25,19 @@ const czechToSlovakMonths = {
     "cerven": "jún", "cervna": "júna", "cervnu": "júni", "cervnem": "júnom",
     "cervenec": "júl", "cervence": "júla", "cervenci": "júli", "cervencem": "júlom",
     "zari": "september",
-    "v zari": "v septembri", "do zari": "do septembra", "ze zari": "zo septembra",
-    "rijen": "október", "rijna": "októbra", "rijnu": "októbri", "rijnem": "októbrom"
+    "rijen": "október", "rijna": "októbra", "rijnu": "októbri", "rijnem": "októbrom",
+
+    // zmiešaná diakritika (ř/mäkčeň zostáva, dĺžne sa strácajú) - len říjen a září majú obe kombinácie
+    "řijen": "október", "řijna": "októbra", "řijnu": "októbri", "řijnem": "októbrom",
+    "zaři": "september",
+    "ríjen": "október", "ríjna": "októbra", "ríjnu": "októbri", "ríjnem": "októbrom",
+
+    // zvyšné kombinácie pre září (á / ř / í nezávisle zap/vyp - spolu všetkých 8)
+    "zarí": "september",
+    "zaří": "september",
+    "zári": "september",
+    "zárí": "september",
+    "záři": "september"
 };
 
 const sortedKeys = Object.keys(czechToSlovakMonths).sort((a, b) => b.length - a.length);
