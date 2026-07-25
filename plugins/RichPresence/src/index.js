@@ -42,17 +42,29 @@ const czechToSlovakMonths = {
 
 const sortedKeys = Object.keys(czechToSlovakMonths).sort((a, b) => b.length - a.length);
 const regexPattern = sortedKeys.map(k => k.replace(" ", "\\s+")).join('|');
-const monthRegex = new RegExp(`(?<!\\p{L})(${regexPattern})(?!\\p{L})`, 'giu');
+// URL (http/https alebo www.) sa zachytí ako celá skupina "url" a nikdy sa nenahrádza —
+// vďaka tomu sa slová vyzerajúce ako mesiace vo vnútri odkazov neprekladajú a link ostane funkčný.
+const urlPattern = "(?:https?:\\/\\/|www\\.)\\S+";
+const combinedRegex = new RegExp(`(?<url>${urlPattern})|(?<!\\p{L})(?<month>${regexPattern})(?!\\p{L})`, 'giu');
 
 let unpatch;
 
 function processMessage(msg, delay = 150) {
-    if (!msg?.content || !monthRegex.test(msg.content)) return;
+    if (!msg?.content) return;
 
-    const translatedText = msg.content.replace(monthRegex, (match) => {
+    let changed = false;
+
+    const translatedText = msg.content.replace(combinedRegex, (match, ...args) => {
+        const groups = args[args.length - 1];
+
+        // Ide o URL adresu -> vrátiť bezo zmeny
+        if (groups?.url) return match;
+
         const norm = match.replace(/\s+/g, ' ').toLowerCase();
         let res = czechToSlovakMonths[norm];
         if (!res) return match;
+
+        changed = true;
 
         // Zachovanie veľkého písmena
         if (match[0] === match[0].toUpperCase()) {
@@ -63,9 +75,11 @@ function processMessage(msg, delay = 150) {
         if (storage.overwriteMode && storage.showBoth) {
             return `${match} (**${res}**)`;
         }
-        
+
         return res;
     });
+
+    if (!changed) return;
 
     if (storage.overwriteMode) {
         msg.content = translatedText;
