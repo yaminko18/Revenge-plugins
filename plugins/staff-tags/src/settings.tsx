@@ -1,4 +1,4 @@
-import { findByProps, findByStoreName } from "@vendetta/metro";
+import { findByStoreName } from "@vendetta/metro";
 import { ReactNative } from "@vendetta/metro/common";
 import { Forms } from "@vendetta/ui/components";
 import { semanticColors } from "@vendetta/ui";
@@ -14,7 +14,6 @@ const COLORS = {
     text: semanticColors?.TEXT_NORMAL ?? "#F2F3F5",
     muted: semanticColors?.TEXT_MUTED ?? "#B5BAC1",
     danger: semanticColors?.TEXT_DANGER ?? "#F23F42",
-    accent: semanticColors?.TEXT_BRAND ?? "#5865F2",
 };
 
 interface OverrideEntry {
@@ -66,11 +65,10 @@ function migrateStorage(): void {
         storage.overrides = [];
     }
     if (storage.targetUserId && storage.imageUrl) {
-        storage.overrides.push({
-            id: `${Date.now()}`,
-            userId: storage.targetUserId,
-            imageUrl: storage.imageUrl,
-        });
+        storage.overrides = [
+            ...storage.overrides,
+            { id: `${Date.now()}`, userId: storage.targetUserId, imageUrl: storage.imageUrl },
+        ];
         delete storage.targetUserId;
         delete storage.imageUrl;
     }
@@ -78,46 +76,51 @@ function migrateStorage(): void {
     // Always show at least one entry by default - "add" is for extra users
     // beyond this first one, not for creating the very first slot.
     if (storage.overrides.length === 0) {
-        storage.overrides.push({
-            id: `${Date.now()}`,
-            userId: "",
-            imageUrl: "",
-        });
+        storage.overrides = [{ id: `${Date.now()}`, userId: "", imageUrl: "" }];
     }
 }
 
+// All three helpers below always assign a brand-new array to
+// storage.overrides (never .push()/mutate in place) - the settings screen
+// only re-renders when it sees the "overrides" reference itself change, so
+// in-place mutation was the reason "add" only showed up after reopening.
 function addEntry(): void {
-    storage.overrides.push({
-        id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        userId: "",
-        imageUrl: "",
-    });
+    storage.overrides = [
+        ...(storage.overrides ?? []),
+        { id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`, userId: "", imageUrl: "" },
+    ];
 }
 
 function removeEntry(id: string): void {
     storage.overrides = (storage.overrides as OverrideEntry[]).filter((entry) => entry.id !== id);
 }
 
+function updateEntry(id: string, patch: Partial<OverrideEntry>): void {
+    storage.overrides = (storage.overrides as OverrideEntry[]).map((entry) =>
+        entry.id === id ? { ...entry, ...patch } : entry
+    );
+}
+
 function AvatarPreview({ label, uri }: { label: string; uri?: string }) {
     return (
         <View style={{ alignItems: "center", marginRight: 16 }}>
             {uri ? (
-                <Image source={{ uri }} style={{ width: 44, height: 44, borderRadius: 22 }} />
+                <Image source={{ uri }} style={{ width: 40, height: 40, borderRadius: 20 }} />
             ) : (
                 <View
                     style={{
-                        width: 44,
-                        height: 44,
-                        borderRadius: 22,
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
                         backgroundColor: "rgba(120,120,128,0.24)",
                         alignItems: "center",
                         justifyContent: "center",
                     }}
                 >
-                    <Text style={{ color: COLORS.muted, fontSize: 16 }}>?</Text>
+                    <Text style={{ color: COLORS.text, fontSize: 16 }}>?</Text>
                 </View>
             )}
-            <Text style={{ color: COLORS.muted, fontSize: 11, marginTop: 4 }}>{label}</Text>
+            <Text style={{ color: COLORS.muted, fontSize: 11, marginTop: 3 }}>{label}</Text>
         </View>
     );
 }
@@ -127,44 +130,44 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
         <View
             style={{
                 marginHorizontal: 12,
-                marginBottom: 12,
+                marginBottom: 10,
                 borderRadius: 12,
                 overflow: "hidden",
                 backgroundColor: "rgba(120,120,128,0.12)",
-                padding: 12,
+                padding: 10,
             }}
         >
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <Text style={{ color: COLORS.text, fontWeight: "600", fontSize: 15 }}>Používateľ</Text>
                 <TouchableOpacity onPress={() => removeEntry(entry.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <Text style={{ color: COLORS.danger, fontSize: 18, fontWeight: "700" }}>✕</Text>
                 </TouchableOpacity>
             </View>
 
-            <Text style={{ color: COLORS.muted, fontSize: 12, marginBottom: 4 }}>User ID</Text>
+            <Text style={{ color: COLORS.text, fontSize: 12, marginBottom: 2 }}>User ID</Text>
             <FormInput
                 placeholder="123456789012345678"
                 value={entry.userId}
-                onChange={(v: string) => { entry.userId = v; }}
-                style={{ marginBottom: 10 }}
+                onChange={(v: string) => updateEntry(entry.id, { userId: v })}
+                style={{ marginBottom: 6 }}
             />
 
-            <FormDivider style={{ marginBottom: 10 }} />
+            <FormDivider style={{ marginBottom: 6 }} />
 
-            <Text style={{ color: COLORS.muted, fontSize: 12, marginBottom: 4 }}>Image URL</Text>
+            <Text style={{ color: COLORS.text, fontSize: 12, marginBottom: 2 }}>Image URL</Text>
             <FormInput
                 placeholder="https://example.com/avatar.png"
                 value={entry.imageUrl}
-                onChange={(v: string) => { entry.imageUrl = v; }}
-                style={{ marginBottom: 10 }}
+                onChange={(v: string) => updateEntry(entry.id, { imageUrl: v })}
+                style={{ marginBottom: 8 }}
             />
 
-            <View style={{ flexDirection: "row", marginBottom: 10 }}>
+            <View style={{ flexDirection: "row", marginBottom: 8 }}>
                 <AvatarPreview label="Pôvodný" uri={getDefaultAvatarUrl(entry.userId)} />
                 <AvatarPreview label="Nový" uri={entry.imageUrl || undefined} />
             </View>
 
-            <Text style={{ color: COLORS.muted, fontSize: 12, marginBottom: 6 }}>
+            <Text style={{ color: COLORS.muted, fontSize: 12, marginBottom: 4 }}>
                 Alebo vyber predvolený avatar:
             </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -173,12 +176,12 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                     return (
                         <TouchableOpacity
                             key={preset.name}
-                            onPress={() => { entry.imageUrl = preset.url; }}
+                            onPress={() => updateEntry(entry.id, { imageUrl: preset.url })}
                             style={{
-                                width: 36,
-                                height: 36,
-                                borderRadius: 18,
-                                marginRight: 10,
+                                width: 34,
+                                height: 34,
+                                borderRadius: 17,
+                                marginRight: 8,
                                 backgroundColor: preset.color,
                                 borderWidth: selected ? 3 : 0,
                                 borderColor: COLORS.text,
@@ -199,7 +202,7 @@ export default () => {
 
     return (
         <ScrollView>
-            <Text style={{ color: COLORS.muted, fontSize: 13, marginHorizontal: 16, marginTop: 12, marginBottom: 8 }}>
+            <Text style={{ color: COLORS.muted, fontSize: 13, marginHorizontal: 16, marginTop: 10, marginBottom: 6 }}>
                 Pridaj ľubovoľný počet používateľov nižšie. Pre každého zadaj Discord
                 User ID a URL obrázku, alebo vyber jednu z predvolených ikoniek.
             </Text>
@@ -210,20 +213,21 @@ export default () => {
 
             <TouchableOpacity
                 onPress={addEntry}
+                activeOpacity={0.7}
                 style={{
                     flexDirection: "row",
                     alignItems: "center",
                     justifyContent: "center",
                     marginHorizontal: 12,
-                    marginTop: 4,
-                    marginBottom: 24,
-                    paddingVertical: 12,
-                    borderRadius: 12,
-                    backgroundColor: "rgba(88,101,242,0.15)",
+                    marginTop: 2,
+                    marginBottom: 16,
+                    paddingVertical: 11,
+                    borderRadius: 8,
+                    backgroundColor: "#5865F2",
                 }}
             >
-                <Text style={{ color: COLORS.accent, fontSize: 16, fontWeight: "700", marginRight: 6 }}>+</Text>
-                <Text style={{ color: COLORS.accent, fontWeight: "600" }}>Pridať používateľa</Text>
+                <Text style={{ color: "#FFFFFF", fontSize: 18, fontWeight: "700", marginRight: 6 }}>+</Text>
+                <Text style={{ color: "#FFFFFF", fontWeight: "600", fontSize: 15 }}>Pridať používateľa</Text>
             </TouchableOpacity>
         </ScrollView>
     );
