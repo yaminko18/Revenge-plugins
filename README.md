@@ -1,6 +1,7 @@
  https://yaminko18.github.io/Revenge-plugins/AnonymousFileNames
  https://yaminko18.github.io/Revenge-plugins/
- https://yaminko18.github.io/Revenge-plugins/HideBlockedAndIgnoredMessages
+ (https://yaminko18.github.io/Revenge-plugins/HideBlockedAndIgnoredMessages)
+ (https://yaminko18.github.io/Revenge-plugins/staff-tags)
 
 A few vendetta plugins have been forked and are being maintained to work with it's successors [Revenge](https://github.com/revenge-mod/revenge-bundle),[Kettu](https://github.com/C0C0B01/Kettu)). Credit goes to the plugin devs for their respective work.
 
