@@ -1,12 +1,10 @@
 import { findByStoreName } from "@vendetta/metro";
 import { ReactNative } from "@vendetta/metro/common";
-import { Forms } from "@vendetta/ui/components";
 import { semanticColors } from "@vendetta/ui";
 import { storage } from "@vendetta/plugin";
 import { useProxy } from "@vendetta/storage";
 
-const { FormInput, FormDivider } = Forms;
-const { View, Text, ScrollView, TouchableOpacity, Image } = ReactNative;
+const { View, Text, ScrollView, TouchableOpacity, Image, TextInput } = ReactNative;
 
 // Fallback colors in case a semanticColors token is missing on some client
 // versions - keeps the UI readable either way.
@@ -55,6 +53,19 @@ function getDefaultAvatarUrl(userId?: string): string | undefined {
             ? Number(user.discriminator) % 5
             : Number(BigInt(user.id) >> 22n) % 6;
         return `https://cdn.discordapp.com/embed/avatars/${index}.png`;
+    } catch {
+        return undefined;
+    }
+}
+
+// Resolves a display name for the card header once a valid, cached user ID
+// is entered - falls back to a generic label until then/if not found.
+function getDisplayName(userId?: string): string | undefined {
+    if (!userId || !UserStore) return undefined;
+    try {
+        const user = UserStore.getUser(userId);
+        if (!user) return undefined;
+        return user.globalName || user.username || undefined;
     } catch {
         return undefined;
     }
@@ -138,31 +149,49 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
             }}
         >
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <Text style={{ color: COLORS.text, fontWeight: "600", fontSize: 15 }}>Používateľ</Text>
+                <Text style={{ color: COLORS.text, fontWeight: "600", fontSize: 15 }}>
+                    {getDisplayName(entry.userId) ?? "Používateľ"}
+                </Text>
                 <TouchableOpacity onPress={() => removeEntry(entry.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <Text style={{ color: COLORS.danger, fontSize: 18, fontWeight: "700" }}>✕</Text>
                 </TouchableOpacity>
             </View>
 
-            <Text style={{ color: COLORS.text, fontSize: 12, marginBottom: 2 }}>User ID</Text>
-            <FormInput
+            <Text style={{ color: COLORS.text, fontSize: 12, marginBottom: 1 }}>User ID</Text>
+            <TextInput
                 placeholder="123456789012345678"
+                placeholderTextColor={COLORS.muted}
                 value={entry.userId}
-                onChange={(v: string) => updateEntry(entry.id, { userId: v })}
-                style={{ marginBottom: 6 }}
+                onChangeText={(v: string) => updateEntry(entry.id, { userId: v })}
+                style={{
+                    color: COLORS.text,
+                    backgroundColor: "rgba(120,120,128,0.16)",
+                    borderRadius: 8,
+                    paddingHorizontal: 10,
+                    paddingVertical: 8,
+                    marginBottom: 6,
+                    fontSize: 14,
+                }}
             />
 
-            <FormDivider style={{ marginBottom: 6 }} />
-
-            <Text style={{ color: COLORS.text, fontSize: 12, marginBottom: 2 }}>Image URL</Text>
-            <FormInput
+            <Text style={{ color: COLORS.text, fontSize: 12, marginBottom: 1 }}>Image URL</Text>
+            <TextInput
                 placeholder="https://example.com/avatar.png"
+                placeholderTextColor={COLORS.muted}
                 value={entry.imageUrl}
-                onChange={(v: string) => updateEntry(entry.id, { imageUrl: v })}
-                style={{ marginBottom: 8 }}
+                onChangeText={(v: string) => updateEntry(entry.id, { imageUrl: v })}
+                style={{
+                    color: COLORS.text,
+                    backgroundColor: "rgba(120,120,128,0.16)",
+                    borderRadius: 8,
+                    paddingHorizontal: 10,
+                    paddingVertical: 8,
+                    marginBottom: 8,
+                    fontSize: 14,
+                }}
             />
 
-            <View style={{ flexDirection: "row", marginBottom: 8 }}>
+            <View style={{ flexDirection: "row", marginBottom: 6 }}>
                 <AvatarPreview label="Pôvodný" uri={getDefaultAvatarUrl(entry.userId)} />
                 <AvatarPreview label="Nový" uri={entry.imageUrl || undefined} />
             </View>
