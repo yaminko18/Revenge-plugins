@@ -10,7 +10,7 @@ const { View, Text, ScrollView, TouchableOpacity, Image, TextInput } = ReactNati
 // versions - keeps the UI readable either way.
 const COLORS = {
     text: semanticColors?.TEXT_NORMAL ?? "#F2F3F5",
-    muted: semanticColors?.TEXT_MUTED ?? "#B5BAC1",
+    muted: "#949BA4",
     danger: semanticColors?.TEXT_DANGER ?? "#F23F42",
 };
 
