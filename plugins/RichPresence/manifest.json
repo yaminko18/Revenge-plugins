@@ -3,5 +3,5 @@
 	"description": "Prekladá české názvy mesiacov v správach do slovenčiny.",
 	"authors": [{ "name": "Yaminko", "id": "666" }],
 	"main": "./src/index.js",
-	"vendetta": { "icon": "ic_language_24px" }
+	"vendetta": { "icon": "ic_language" }
 }
