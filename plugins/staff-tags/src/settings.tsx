@@ -74,6 +74,16 @@ function migrateStorage(): void {
         delete storage.targetUserId;
         delete storage.imageUrl;
     }
+
+    // Always show at least one entry by default - "add" is for extra users
+    // beyond this first one, not for creating the very first slot.
+    if (storage.overrides.length === 0) {
+        storage.overrides.push({
+            id: `${Date.now()}`,
+            userId: "",
+            imageUrl: "",
+        });
+    }
 }
 
 function addEntry(): void {
@@ -193,12 +203,6 @@ export default () => {
                 Pridaj ľubovoľný počet používateľov nižšie. Pre každého zadaj Discord
                 User ID a URL obrázku, alebo vyber jednu z predvolených ikoniek.
             </Text>
-
-            {overrides.length === 0 && (
-                <Text style={{ color: COLORS.muted, marginHorizontal: 16, marginBottom: 12 }}>
-                    Zatiaľ žiadny používateľ. Pridaj ho tlačidlom nižšie.
-                </Text>
-            )}
 
             {overrides.map((entry) => (
                 <OverrideCard key={entry.id} entry={entry} />
