@@ -1,5 +1,6 @@
 import { findByProps, findByStoreName } from "@vendetta/metro";
 import { FluxDispatcher } from "@vendetta/metro/common";
+import { after } from "@vendetta/patcher";
 import { storage } from "@vendetta/plugin";
 
 // tag added to all print statements to help with debugging with logcat on adb
@@ -60,40 +61,32 @@ export function onLoad() {
         return;
     }
 
-    // patch getUserAvatarSource, overrides avatar in DMs and group chats
+    // Use Vendetta's official patcher ("after") instead of manually
+    // overwriting avatarModule.getUserAvatarSource/getUserAvatarURL.
+    // Manually reassigning these functions replaces whatever any other
+    // plugin (e.g. one that also touches avatars, like staff-tags) had
+    // already patched in, which is what was causing the crash - "after"
+    // lets multiple plugins patch the same function without one wiping
+    // out another's patch.
     if (avatarModule.getUserAvatarSource) {
-        const originalGetUserAvatarSource = avatarModule.getUserAvatarSource;
-        avatarModule.getUserAvatarSource = function (...args) {
+        patches.push(after("getUserAvatarSource", avatarModule, (args, res) => {
             const user = args[0];
             const override = getOverrideUrl(user && user.id);
-
-            if (override) {
-                const original = originalGetUserAvatarSource.apply(this, args);
-                if (original) {
-                    return {
-                        ...original,
-                        uri: override
-                    };
-                }
+            if (override && res) {
+                res.uri = override;
             }
-            // no override for this user, fall through
-            return originalGetUserAvatarSource.apply(this, args);
-        };
-        patches.push(() => { avatarModule.getUserAvatarSource = originalGetUserAvatarSource; });
+            return res;
+        }));
     }
 
-    // patch getUserAvatarURL, overrides avatar in voice calls
-    const originalGetUserAvatarURL = avatarModule.getUserAvatarURL;
-    avatarModule.getUserAvatarURL = function (...args) {
+    patches.push(after("getUserAvatarURL", avatarModule, (args, res) => {
         const user = args[0];
         const override = getOverrideUrl(user && user.id);
-
         if (override) {
             return override;
         }
-        return originalGetUserAvatarURL.apply(this, args);
-    };
-    patches.push(() => { avatarModule.getUserAvatarURL = originalGetUserAvatarURL; });
+        return res;
+    }));
 
     const overrideCount = (storage.overrides || []).length;
     console.log(`${TAG} patches applied for ${overrideCount} user(s)`);
