@@ -7,6 +7,6 @@
         "id": "666"
     }
 ],
-  "icon": "ic_person",
+  "icon": "ic_person_status",
   "main": "src/index.ts"
 }
