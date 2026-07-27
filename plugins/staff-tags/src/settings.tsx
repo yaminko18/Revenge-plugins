@@ -119,7 +119,6 @@ function AvatarPreview({ label, uri, userId, color }: { label: string; uri?: str
 
     return (
         <View>
-            <Text style={{ color, fontSize: 11, marginBottom: 3 }}>{label}</Text>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
                 {uri ? (
                     <Image source={{ uri }} style={{ width: 36, height: 36, borderRadius: 18 }} />
@@ -148,6 +147,7 @@ function AvatarPreview({ label, uri, userId, color }: { label: string; uri?: str
                     )}
                 </View>
             </View>
+            <Text style={{ color, fontSize: 11, marginTop: 3 }}>{label}</Text>
         </View>
     );
 }
