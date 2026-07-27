@@ -124,26 +124,43 @@ function updateEntry(id: string, patch: Partial<OverrideEntry>): void {
     );
 }
 
-function AvatarPreview({ label, uri, color }: { label: string; uri?: string; color: string }) {
+function AvatarPreview({ label, uri, userId, color }: { label: string; uri?: string; userId?: string; color: string }) {
+    const user = userId && UserStore ? UserStore.getUser(userId) : null;
+    const displayName = user?.globalName || user?.username;
+    const username = user?.username;
+    const showUsername = !!username && !!displayName && username !== displayName;
+
     return (
-        <View style={{ alignItems: "center", marginRight: 16 }}>
-            {uri ? (
-                <Image source={{ uri }} style={{ width: 40, height: 40, borderRadius: 20 }} />
-            ) : (
-                <View
-                    style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 20,
-                        backgroundColor: "rgba(120,120,128,0.24)",
-                        alignItems: "center",
-                        justifyContent: "center",
-                    }}
-                >
-                    <Text style={{ color, fontSize: 16 }}>?</Text>
+        <View>
+            <Text style={{ color, fontSize: 11, marginBottom: 3 }}>{label}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+                {uri ? (
+                    <Image source={{ uri }} style={{ width: 36, height: 36, borderRadius: 18 }} />
+                ) : (
+                    <View
+                        style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: 18,
+                            backgroundColor: "rgba(120,120,128,0.24)",
+                            alignItems: "center",
+                            justifyContent: "center",
+                        }}
+                    >
+                        <Text style={{ color, fontSize: 14 }}>?</Text>
+                    </View>
+                )}
+                <View style={{ marginLeft: 8, flexShrink: 1 }}>
+                    <Text style={{ color, fontWeight: "600", fontSize: 13 }} numberOfLines={1}>
+                        {displayName ?? "Unknown user"}
+                    </Text>
+                    {showUsername && (
+                        <Text style={{ color: "#949BA4", fontSize: 11 }} numberOfLines={1}>
+                            @{username}
+                        </Text>
+                    )}
                 </View>
-            )}
-            <Text style={{ color, fontSize: 11, marginTop: 3 }}>{label}</Text>
+            </View>
         </View>
     );
 }
@@ -171,11 +188,10 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                 {getDisplayName(entry.userId) ?? "User"}
             </Text>
 
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <View style={{ flexDirection: "row" }}>
-                    <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} color={activeColor} />
-                    <AvatarPreview label="New" uri={entry.imageUrl || undefined} color={activeColor} />
-                </View>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <Text style={{ color: activeColor, fontWeight: "600", fontSize: 15 }}>
+                    {getDisplayName(entry.userId) ?? "User"}
+                </Text>
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <Switch
                         value={isEnabled}
@@ -185,6 +201,15 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                     <TouchableOpacity onPress={() => removeEntry(entry.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                         <Text style={{ color: COLORS.danger, fontSize: 18, fontWeight: "700" }}>✕</Text>
                     </TouchableOpacity>
+                </View>
+            </View>
+
+            <View style={{ flexDirection: "row", marginBottom: 6 }}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                    <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} userId={entry.userId} color={activeColor} />
+                </View>
+                <View style={{ flex: 1 }}>
+                    <AvatarPreview label="New" uri={entry.imageUrl || undefined} userId={entry.userId} color={activeColor} />
                 </View>
             </View>
 
