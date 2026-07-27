@@ -8,7 +8,7 @@
     }
 ],
 "main": "src/index.tsx",
-    "vendetta": {
-        "icon": "ic_person_status"
+"vendetta": {
+      "icon": "ic_person_status"
     }
 }
