@@ -111,7 +111,7 @@ function updateEntry(id: string, patch: Partial<OverrideEntry>): void {
     );
 }
 
-function AvatarPreview({ label, uri, userId, color }: { label: string; uri?: string; userId?: string; color: string }) {
+function AvatarPreview({ label, uri, userId, color, showName }: { label: string; uri?: string; userId?: string; color: string; showName?: boolean }) {
     const user = userId && UserStore ? UserStore.getUser(userId) : null;
     const displayName = user?.globalName || user?.username;
     const username = user?.username;
@@ -136,16 +136,18 @@ function AvatarPreview({ label, uri, userId, color }: { label: string; uri?: str
                         <Text style={{ color, fontSize: 14 }}>?</Text>
                     </View>
                 )}
-                <View style={{ marginLeft: 8, flexShrink: 1 }}>
-                    <Text style={{ color, fontWeight: "600", fontSize: 13 }} numberOfLines={1}>
-                        {displayName ?? "Unknown user"}
-                    </Text>
-                    {showUsername && (
-                        <Text style={{ color: "#949BA4", fontSize: 11 }} numberOfLines={1}>
-                            @{username}
+                {showName && (
+                    <View style={{ marginLeft: 8, flexShrink: 1 }}>
+                        <Text style={{ color, fontWeight: "600", fontSize: 13 }} numberOfLines={1}>
+                            {displayName ?? "Unknown user"}
                         </Text>
-                    )}
-                </View>
+                        {showUsername && (
+                            <Text style={{ color: "#949BA4", fontSize: 11 }} numberOfLines={1}>
+                                @{username}
+                            </Text>
+                        )}
+                    </View>
+                )}
             </View>
             <Text style={{ color, fontSize: 11, marginTop: 3 }}>{label}</Text>
         </View>
@@ -176,7 +178,7 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                     <View style={{ marginRight: 16 }}>
                         <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} userId={entry.userId} color={activeColor} />
                     </View>
-                    <AvatarPreview label="New" uri={entry.imageUrl || undefined} userId={entry.userId} color={activeColor} />
+                    <AvatarPreview label="New" uri={entry.imageUrl || undefined} userId={entry.userId} color={activeColor} showName />
                 </View>
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <Switch
