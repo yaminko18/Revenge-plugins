@@ -284,6 +284,8 @@ export default () => {
                 <Text style={{ color: "#FFFFFF", fontSize: 18, fontWeight: "700", marginRight: 6 }}>+</Text>
                 <Text style={{ color: "#FFFFFF", fontWeight: "600", fontSize: 15 }}>Add user</Text>
             </TouchableOpacity>
+
+            <View style={{ height: 24 }} />
         </ScrollView>
     );
 };
