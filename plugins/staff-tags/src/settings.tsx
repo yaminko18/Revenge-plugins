@@ -25,27 +25,36 @@ interface OverrideEntry {
 // look without hunting for an image URL. Point these at your own hosted
 // files (bundled in the plugin repo and served via raw.githubusercontent.com,
 // or any other static host) - swap the "url" values below for the real ones.
-const DEFAULT_AVATARS: { name: string; color: string; url: string }[] = [
-    { name: "Red", color: "#FF1F1F", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/red.png" },
-    { name: "Orange", color: "#FF7A00", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/orange.png" },
-    { name: "Amber", color: "#FFB800", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/amber.png" },
-    { name: "Yellow", color: "#FFE600", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/yellow.png" },
-    { name: "Lime", color: "#B0FF00", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/lime.png" },
-    { name: "Green", color: "#00E676", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/green.png" },
-    { name: "Teal", color: "#00C2D1", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/teal.png" },
-    { name: "Cyan", color: "#00E5FF", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/cyan.png" },
-    { name: "Sky", color: "#0091FF", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/sky.png" },
-    { name: "Blue", color: "#2F54EB", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/blue.png" },
-    { name: "Indigo", color: "#4338CA", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/indigo.png" },
-    { name: "Purple", color: "#B620E0", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/purple.png" },
-    { name: "Violet", color: "#7C3AED", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/violet.png" },
-    { name: "Pink", color: "#FF2D95", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/pink.png" },
-    { name: "Rose", color: "#FF3D68", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/rose.png" },
-    { name: "Brown", color: "#A15C2E", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/brown.png" },
-    { name: "Gray", color: "#8E9297", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/gray.png" },
-    { name: "Black", color: "#101214", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/black.png" },
-    { name: "White", color: "#FFFFFF", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/white.png" },
+// Single place to change if you move the hosted avatars elsewhere -
+// every color's URL is built from this plus "<name>.png".
+const AVATAR_BASE_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars";
+
+const DEFAULT_AVATAR_COLORS: { name: string; color: string }[] = [
+    { name: "Red", color: "#FF1F1F" },
+    { name: "Orange", color: "#FF7A00" },
+    { name: "Amber", color: "#FFB800" },
+    { name: "Yellow", color: "#FFE600" },
+    { name: "Lime", color: "#B0FF00" },
+    { name: "Green", color: "#00E676" },
+    { name: "Teal", color: "#00C2D1" },
+    { name: "Cyan", color: "#00E5FF" },
+    { name: "Sky", color: "#0091FF" },
+    { name: "Blue", color: "#2F54EB" },
+    { name: "Indigo", color: "#4338CA" },
+    { name: "Purple", color: "#B620E0" },
+    { name: "Violet", color: "#7C3AED" },
+    { name: "Pink", color: "#FF2D95" },
+    { name: "Rose", color: "#FF3D68" },
+    { name: "Brown", color: "#A15C2E" },
+    { name: "Gray", color: "#8E9297" },
+    { name: "Black", color: "#101214" },
+    { name: "White", color: "#FFFFFF" },
 ];
+
+const DEFAULT_AVATARS: { name: string; color: string; url: string }[] = DEFAULT_AVATAR_COLORS.map((preset) => ({
+    ...preset,
+    url: `${AVATAR_BASE_URL}/${preset.name.toLowerCase()}.png`,
+}));
 
 const UserStore = findByStoreName("UserStore");
 
