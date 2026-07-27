@@ -36,6 +36,7 @@ function getOverrideUrl(userId) {
     const entries = storage.overrides || [];
     for (let i = 0; i < entries.length; i++) {
         const entry = entries[i];
+        if (entry && entry.enabled === false) continue;
         if (entry && entry.userId === userId && entry.imageUrl) {
             return entry.imageUrl;
         }

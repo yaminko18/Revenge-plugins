@@ -4,7 +4,7 @@ import { semanticColors } from "@vendetta/ui";
 import { storage } from "@vendetta/plugin";
 import { useProxy } from "@vendetta/storage";
 
-const { View, Text, ScrollView, TouchableOpacity, Image, TextInput } = ReactNative;
+const { View, Text, ScrollView, TouchableOpacity, Image, TextInput, Switch } = ReactNative;
 
 // Fallback colors in case a semanticColors token is missing on some client
 // versions - keeps the UI readable either way.
@@ -18,6 +18,7 @@ interface OverrideEntry {
     id: string;
     userId: string;
     imageUrl: string;
+    enabled?: boolean;
 }
 
 // Default avatar presets, shown as color swatches so a user can be given a
@@ -78,7 +79,7 @@ function migrateStorage(): void {
     if (storage.targetUserId && storage.imageUrl) {
         storage.overrides = [
             ...storage.overrides,
-            { id: `${Date.now()}`, userId: storage.targetUserId, imageUrl: storage.imageUrl },
+            { id: `${Date.now()}`, userId: storage.targetUserId, imageUrl: storage.imageUrl, enabled: true },
         ];
         delete storage.targetUserId;
         delete storage.imageUrl;
@@ -87,7 +88,7 @@ function migrateStorage(): void {
     // Always show at least one entry by default - "add" is for extra users
     // beyond this first one, not for creating the very first slot.
     if (storage.overrides.length === 0) {
-        storage.overrides = [{ id: `${Date.now()}`, userId: "", imageUrl: "" }];
+        storage.overrides = [{ id: `${Date.now()}`, userId: "", imageUrl: "", enabled: true }];
     }
 }
 
@@ -98,7 +99,7 @@ function migrateStorage(): void {
 function addEntry(): void {
     storage.overrides = [
         ...(storage.overrides ?? []),
-        { id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`, userId: "", imageUrl: "" },
+        { id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`, userId: "", imageUrl: "", enabled: true },
     ];
 }
 
@@ -112,7 +113,7 @@ function updateEntry(id: string, patch: Partial<OverrideEntry>): void {
     );
 }
 
-function AvatarPreview({ label, uri }: { label: string; uri?: string }) {
+function AvatarPreview({ label, uri, color }: { label: string; uri?: string; color: string }) {
     return (
         <View style={{ alignItems: "center", marginRight: 16 }}>
             {uri ? (
@@ -128,15 +129,20 @@ function AvatarPreview({ label, uri }: { label: string; uri?: string }) {
                         justifyContent: "center",
                     }}
                 >
-                    <Text style={{ color: COLORS.text, fontSize: 16 }}>?</Text>
+                    <Text style={{ color, fontSize: 16 }}>?</Text>
                 </View>
             )}
-            <Text style={{ color: COLORS.muted, fontSize: 11, marginTop: 3 }}>{label}</Text>
+            <Text style={{ color, fontSize: 11, marginTop: 3 }}>{label}</Text>
         </View>
     );
 }
 
 function OverrideCard({ entry }: { entry: OverrideEntry }) {
+    // Anything not explicitly set to false counts as enabled (keeps
+    // pre-existing entries working the same as before this field existed).
+    const isEnabled = entry.enabled !== false;
+    const activeColor = isEnabled ? COLORS.text : COLORS.muted;
+
     return (
         <View
             style={{
@@ -149,22 +155,29 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
             }}
         >
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <Text style={{ color: COLORS.text, fontWeight: "600", fontSize: 15 }}>
-                    {getDisplayName(entry.userId) ?? "Používateľ"}
+                <Text style={{ color: activeColor, fontWeight: "600", fontSize: 15 }}>
+                    {getDisplayName(entry.userId) ?? "User"}
                 </Text>
-                <TouchableOpacity onPress={() => removeEntry(entry.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Text style={{ color: COLORS.danger, fontSize: 18, fontWeight: "700" }}>✕</Text>
-                </TouchableOpacity>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Switch
+                        value={isEnabled}
+                        onValueChange={(v: boolean) => updateEntry(entry.id, { enabled: v })}
+                        style={{ marginRight: 12 }}
+                    />
+                    <TouchableOpacity onPress={() => removeEntry(entry.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Text style={{ color: COLORS.danger, fontSize: 18, fontWeight: "700" }}>✕</Text>
+                    </TouchableOpacity>
+                </View>
             </View>
 
-            <Text style={{ color: COLORS.text, fontSize: 12, marginBottom: 1 }}>User ID</Text>
+            <Text style={{ color: activeColor, fontSize: 12, marginBottom: 1 }}>User ID</Text>
             <TextInput
                 placeholder="123456789012345678"
                 placeholderTextColor={COLORS.muted}
                 value={entry.userId}
                 onChangeText={(v: string) => updateEntry(entry.id, { userId: v })}
                 style={{
-                    color: COLORS.text,
+                    color: activeColor,
                     backgroundColor: "rgba(120,120,128,0.16)",
                     borderRadius: 8,
                     paddingHorizontal: 10,
@@ -174,14 +187,14 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                 }}
             />
 
-            <Text style={{ color: COLORS.text, fontSize: 12, marginBottom: 1 }}>Image URL</Text>
+            <Text style={{ color: activeColor, fontSize: 12, marginBottom: 1 }}>Image URL</Text>
             <TextInput
                 placeholder="https://example.com/avatar.png"
                 placeholderTextColor={COLORS.muted}
                 value={entry.imageUrl}
                 onChangeText={(v: string) => updateEntry(entry.id, { imageUrl: v })}
                 style={{
-                    color: COLORS.text,
+                    color: activeColor,
                     backgroundColor: "rgba(120,120,128,0.16)",
                     borderRadius: 8,
                     paddingHorizontal: 10,
@@ -192,12 +205,12 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
             />
 
             <View style={{ flexDirection: "row", marginBottom: 6 }}>
-                <AvatarPreview label="Pôvodný" uri={getDefaultAvatarUrl(entry.userId)} />
-                <AvatarPreview label="Nový" uri={entry.imageUrl || undefined} />
+                <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} color={activeColor} />
+                <AvatarPreview label="New" uri={entry.imageUrl || undefined} color={activeColor} />
             </View>
 
-            <Text style={{ color: COLORS.muted, fontSize: 12, marginBottom: 4 }}>
-                Alebo vyber predvolený avatar:
+            <Text style={{ color: activeColor, fontSize: 12, marginBottom: 4 }}>
+                Or pick a default avatar:
             </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {DEFAULT_AVATARS.map((preset) => {
@@ -213,7 +226,7 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                                 marginRight: 8,
                                 backgroundColor: preset.color,
                                 borderWidth: selected ? 3 : 0,
-                                borderColor: COLORS.text,
+                                borderColor: activeColor,
                             }}
                         />
                     );
@@ -232,8 +245,10 @@ export default () => {
     return (
         <ScrollView>
             <Text style={{ color: COLORS.muted, fontSize: 13, marginHorizontal: 16, marginTop: 10, marginBottom: 6 }}>
-                Pridaj ľubovoľný počet používateľov nižšie. Pre každého zadaj Discord
-                User ID a URL obrázku, alebo vyber jednu z predvolených ikoniek.
+                Add as many users as you like below. For each one, enter their
+                Discord User ID and an image URL, or pick one of the default
+                presets. Use the switch to enable or disable an override
+                without deleting it.
             </Text>
 
             {overrides.map((entry) => (
@@ -256,7 +271,7 @@ export default () => {
                 }}
             >
                 <Text style={{ color: "#FFFFFF", fontSize: 18, fontWeight: "700", marginRight: 6 }}>+</Text>
-                <Text style={{ color: "#FFFFFF", fontWeight: "600", fontSize: 15 }}>Pridať používateľa</Text>
+                <Text style={{ color: "#FFFFFF", fontWeight: "600", fontSize: 15 }}>Add user</Text>
             </TouchableOpacity>
         </ScrollView>
     );
