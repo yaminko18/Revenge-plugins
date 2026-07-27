@@ -1,5 +1,4 @@
-import { findByProps, findByStoreName } from "@vendetta/metro";
-import { FluxDispatcher } from "@vendetta/metro/common";
+import { findByProps } from "@vendetta/metro";
 import { after } from "@vendetta/patcher";
 import { storage } from "@vendetta/plugin";
 
@@ -49,12 +48,6 @@ export function onLoad() {
 
     migrateStorage();
 
-    const UserStore = findByStoreName("UserStore");
-    if (!UserStore) {
-        console.log(`${TAG} userStore not found`);
-        return;
-    }
-
     const avatarModule = findByProps("getUserAvatarURL");
     if (!avatarModule) {
         console.log(`${TAG} avatar module not found`);
@@ -90,22 +83,6 @@ export function onLoad() {
 
     const overrideCount = (storage.overrides || []).length;
     console.log(`${TAG} patches applied for ${overrideCount} user(s)`);
-
-    // refresh ui for every overridden user
-    try {
-        const entries = storage.overrides || [];
-        for (let i = 0; i < entries.length; i++) {
-            const entry = entries[i];
-            if (!entry || !entry.userId) continue;
-            FluxDispatcher.dispatch({
-                type: "USER_UPDATE",
-                user: UserStore.getUser(entry.userId)
-            });
-        }
-        console.log(`${TAG} ui refreshed`);
-    } catch (e) {
-        console.log(`${TAG} could not trigger refresh:`, e.message);
-    }
 }
 
 export function onUnload() {
