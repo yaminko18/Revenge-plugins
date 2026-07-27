@@ -70,19 +70,6 @@ function getDefaultAvatarUrl(userId?: string): string | undefined {
     }
 }
 
-// Resolves a display name for the card header once a valid, cached user ID
-// is entered - falls back to a generic label until then/if not found.
-function getDisplayName(userId?: string): string | undefined {
-    if (!userId || !UserStore) return undefined;
-    try {
-        const user = UserStore.getUser(userId);
-        if (!user) return undefined;
-        return user.globalName || user.username || undefined;
-    } catch {
-        return undefined;
-    }
-}
-
 function migrateStorage(): void {
     if (!Array.isArray(storage.overrides)) {
         storage.overrides = [];
@@ -184,14 +171,13 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                 paddingBottom: 10,
             }}
         >
-            <Text style={{ color: activeColor, fontWeight: "600", fontSize: 15, marginBottom: 6 }}>
-                {getDisplayName(entry.userId) ?? "User"}
-            </Text>
-
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <Text style={{ color: activeColor, fontWeight: "600", fontSize: 15 }}>
-                    {getDisplayName(entry.userId) ?? "User"}
-                </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <View style={{ flexDirection: "row" }}>
+                    <View style={{ marginRight: 16 }}>
+                        <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} userId={entry.userId} color={activeColor} />
+                    </View>
+                    <AvatarPreview label="New" uri={entry.imageUrl || undefined} userId={entry.userId} color={activeColor} />
+                </View>
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <Switch
                         value={isEnabled}
@@ -201,15 +187,6 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                     <TouchableOpacity onPress={() => removeEntry(entry.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                         <Text style={{ color: COLORS.danger, fontSize: 18, fontWeight: "700" }}>✕</Text>
                     </TouchableOpacity>
-                </View>
-            </View>
-
-            <View style={{ flexDirection: "row", marginBottom: 6 }}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                    <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} userId={entry.userId} color={activeColor} />
-                </View>
-                <View style={{ flex: 1 }}>
-                    <AvatarPreview label="New" uri={entry.imageUrl || undefined} userId={entry.userId} color={activeColor} />
                 </View>
             </View>
 
