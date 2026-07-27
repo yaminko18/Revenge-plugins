@@ -167,10 +167,15 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                 paddingBottom: 10,
             }}
         >
+            <Text style={{ color: activeColor, fontWeight: "600", fontSize: 15, marginBottom: 6 }}>
+                {getDisplayName(entry.userId) ?? "User"}
+            </Text>
+
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <Text style={{ color: activeColor, fontWeight: "600", fontSize: 15 }}>
-                    {getDisplayName(entry.userId) ?? "User"}
-                </Text>
+                <View style={{ flexDirection: "row" }}>
+                    <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} color={activeColor} />
+                    <AvatarPreview label="New" uri={entry.imageUrl || undefined} color={activeColor} />
+                </View>
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <Switch
                         value={isEnabled}
@@ -181,11 +186,6 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                         <Text style={{ color: COLORS.danger, fontSize: 18, fontWeight: "700" }}>✕</Text>
                     </TouchableOpacity>
                 </View>
-            </View>
-
-            <View style={{ flexDirection: "row", marginBottom: 6 }}>
-                <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} color={activeColor} />
-                <AvatarPreview label="New" uri={entry.imageUrl || undefined} color={activeColor} />
             </View>
 
             <Text style={{ color: activeColor, fontSize: 12, marginBottom: 1 }}>User ID</Text>
