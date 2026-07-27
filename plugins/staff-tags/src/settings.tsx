@@ -27,7 +27,7 @@ interface OverrideEntry {
 // or any other static host) - swap the "url" values below for the real ones.
 // Single place to change if you move the hosted avatars elsewhere -
 // every color's URL is built from this plus "<name>.png".
-const AVATAR_BASE_URL = "https://raw.githubusercontent.com/yaminko18/Revenge-plugins/main/plugins/staff-tags/src/avatars";
+const AVATAR_BASE_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars";
 
 const DEFAULT_AVATAR_COLORS: { name: string; color: string }[] = [
     { name: "Red", color: "#FF1F1F" },
@@ -186,7 +186,7 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
         >
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <View style={{ flexDirection: "row" }}>
-                    <View style={{ marginRight: 16 }}>
+                    <View style={{ marginRight: 18 }}>
                         <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} userId={entry.userId} color={activeColor} />
                     </View>
                     <AvatarPreview label="New" uri={entry.imageUrl || undefined} userId={entry.userId} color={activeColor} showName />
