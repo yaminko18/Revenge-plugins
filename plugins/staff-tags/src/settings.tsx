@@ -26,14 +26,25 @@ interface OverrideEntry {
 // files (bundled in the plugin repo and served via raw.githubusercontent.com,
 // or any other static host) - swap the "url" values below for the real ones.
 const DEFAULT_AVATARS: { name: string; color: string; url: string }[] = [
-    { name: "Red", color: "#ED4245", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/red.png" },
-    { name: "Orange", color: "#E67E22", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/orange.png" },
-    { name: "Yellow", color: "#FEE75C", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/yellow.png" },
-    { name: "Green", color: "#57F287", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/green.png" },
-    { name: "Teal", color: "#3AB6D1", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/teal.png" },
-    { name: "Blue", color: "#5865F2", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/blue.png" },
-    { name: "Purple", color: "#9B59B6", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/purple.png" },
-    { name: "Pink", color: "#EB459E", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/pink.png" },
+    { name: "Red", color: "#FF1F1F", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/red.png" },
+    { name: "Orange", color: "#FF7A00", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/orange.png" },
+    { name: "Amber", color: "#FFB800", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/amber.png" },
+    { name: "Yellow", color: "#FFE600", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/yellow.png" },
+    { name: "Lime", color: "#B0FF00", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/lime.png" },
+    { name: "Green", color: "#00E676", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/green.png" },
+    { name: "Teal", color: "#00C2D1", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/teal.png" },
+    { name: "Cyan", color: "#00E5FF", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/cyan.png" },
+    { name: "Sky", color: "#0091FF", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/sky.png" },
+    { name: "Blue", color: "#2F54EB", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/blue.png" },
+    { name: "Indigo", color: "#4338CA", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/indigo.png" },
+    { name: "Purple", color: "#B620E0", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/purple.png" },
+    { name: "Violet", color: "#7C3AED", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/violet.png" },
+    { name: "Pink", color: "#FF2D95", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/pink.png" },
+    { name: "Rose", color: "#FF3D68", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/rose.png" },
+    { name: "Brown", color: "#A15C2E", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/brown.png" },
+    { name: "Gray", color: "#8E9297", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/gray.png" },
+    { name: "Black", color: "#101214", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/black.png" },
+    { name: "White", color: "#FFFFFF", url: "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars/white.png" },
 ];
 
 const UserStore = findByStoreName("UserStore");
@@ -225,12 +236,15 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                                 borderRadius: 17,
                                 marginRight: 8,
                                 backgroundColor: preset.color,
-                                borderWidth: selected ? 3 : 0,
-                                borderColor: activeColor,
+                                borderWidth: selected ? 3 : 1,
+                                borderColor: selected ? activeColor : COLORS.muted,
                             }}
                         />
                     );
                 })}
+                <View style={{ width: 34, height: 34, alignItems: "center", justifyContent: "center" }}>
+                    <Text style={{ color: COLORS.muted, fontSize: 16 }}>→</Text>
+                </View>
             </ScrollView>
         </View>
     );
