@@ -27,7 +27,7 @@ interface OverrideEntry {
 // or any other static host) - swap the "url" values below for the real ones.
 // Single place to change if you move the hosted avatars elsewhere -
 // every color's URL is built from this plus "<name>.png".
-const AVATAR_BASE_URL = "https://raw.githubusercontent.com/yaminko18/Revenge-plugins/main/plugins/staff-tags/src/avatars";
+const AVATAR_BASE_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars";
 
 const DEFAULT_AVATAR_COLORS: { name: string; color: string }[] = [
     { name: "Red", color: "#FF1F1F" },
@@ -158,7 +158,9 @@ function AvatarPreview({ label, uri, userId, color, showName }: { label: string;
                     </View>
                 )}
             </View>
-            <Text style={{ color, fontSize: 11, marginTop: 3 }}>{label}</Text>
+            <View style={{ width: 36, alignItems: "center" }}>
+                <Text style={{ color, fontSize: 11, marginTop: 3, textAlign: "center" }}>{label}</Text>
+            </View>
         </View>
     );
 }
