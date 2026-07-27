@@ -242,9 +242,6 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                         />
                     );
                 })}
-                <View style={{ width: 34, height: 34, alignItems: "center", justifyContent: "center" }}>
-                    <Text style={{ color: COLORS.muted, fontSize: 16 }}>→</Text>
-                </View>
             </ScrollView>
         </View>
     );
