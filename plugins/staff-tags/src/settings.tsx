@@ -162,7 +162,9 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                 borderRadius: 12,
                 overflow: "hidden",
                 backgroundColor: "rgba(120,120,128,0.12)",
-                padding: 10,
+                paddingHorizontal: 10,
+                paddingTop: 6,
+                paddingBottom: 10,
             }}
         >
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
@@ -179,6 +181,11 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                         <Text style={{ color: COLORS.danger, fontSize: 18, fontWeight: "700" }}>✕</Text>
                     </TouchableOpacity>
                 </View>
+            </View>
+
+            <View style={{ flexDirection: "row", marginBottom: 6 }}>
+                <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} color={activeColor} />
+                <AvatarPreview label="New" uri={entry.imageUrl || undefined} color={activeColor} />
             </View>
 
             <Text style={{ color: activeColor, fontSize: 12, marginBottom: 1 }}>User ID</Text>
@@ -214,11 +221,6 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                     fontSize: 14,
                 }}
             />
-
-            <View style={{ flexDirection: "row", marginBottom: 6 }}>
-                <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} color={activeColor} />
-                <AvatarPreview label="New" uri={entry.imageUrl || undefined} color={activeColor} />
-            </View>
 
             <Text style={{ color: activeColor, fontSize: 12, marginBottom: 4 }}>
                 Or pick a default avatar:
