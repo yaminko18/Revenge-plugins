@@ -158,8 +158,8 @@ function AvatarPreview({ label, uri, userId, color, showName }: { label: string;
                     </View>
                 )}
             </View>
-            <View style={{ width: 36, alignItems: "center" }}>
-                <Text style={{ color, fontSize: 11, marginTop: 3, textAlign: "center" }}>{label}</Text>
+            <View style={{ minWidth: 36, alignItems: "center" }}>
+                <Text numberOfLines={1} style={{ color, fontSize: 11, marginTop: 3, textAlign: "center" }}>{label}</Text>
             </View>
         </View>
     );
