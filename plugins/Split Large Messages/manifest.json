@@ -3,8 +3,8 @@
     "description": "Automatically splits messages larger than 2000/4000 characters",
     "authors": [
         {
-            "name": "sunnie",
-            "id": "406028027768733696"
+            "name": "Yaminko",
+            "id": "666"
         }
     ],
     "main": "src/index.ts",
