@@ -1,10 +1,16 @@
 import { findByStoreName } from "@vendetta/metro";
-import { ReactNative } from "@vendetta/metro/common";
+import { ReactNative, React } from "@vendetta/metro/common";
+import { getAssetIDByName } from "@vendetta/ui/assets";
 import { semanticColors } from "@vendetta/ui";
 import { storage } from "@vendetta/plugin";
 import { useProxy } from "@vendetta/storage";
 
 const { View, Text, ScrollView, TouchableOpacity, Image, TextInput, Switch } = ReactNative;
+
+// Looked up by name, not by the numeric index an asset browser might show -
+// the index can shift between app versions, the name is the stable part.
+const TRASH_ICON = getAssetIDByName("TrashIcon");
+const EYE_HIDDEN_ICON = getAssetIDByName("ic_eye_hidden");
 
 // Fallback colors in case a semanticColors token is missing on some client
 // versions - keeps the UI readable either way.
@@ -27,7 +33,7 @@ interface OverrideEntry {
 // or any other static host) - swap the "url" values below for the real ones.
 // Single place to change if you move the hosted avatars elsewhere -
 // every color's URL is built from this plus "<name>.png".
-const AVATAR_BASE_URL = "https://raw.githubusercontent.com/yaminko18/Revenge-plugins/main/plugins/staff-tags/src/avatars";
+const AVATAR_BASE_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars";
 
 const DEFAULT_AVATAR_COLORS: { name: string; color: string }[] = [
     { name: "Red", color: "#FF1F1F" },
@@ -121,6 +127,10 @@ function updateEntry(id: string, patch: Partial<OverrideEntry>): void {
 }
 
 function AvatarPreview({ label, uri, userId, color, showName }: { label: string; uri?: string; userId?: string; color: string; showName?: boolean }) {
+    // Local-only, settings-screen-only toggle - lets you hide the preview
+    // image (e.g. before screen sharing) without touching any stored data.
+    const [hidden, setHidden] = React.useState(false);
+
     let user: any = null;
     if (userId && UserStore) {
         try {
@@ -136,22 +146,41 @@ function AvatarPreview({ label, uri, userId, color, showName }: { label: string;
     return (
         <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
             <View style={{ alignItems: "center" }}>
-                {uri ? (
-                    <Image source={{ uri }} style={{ width: 36, height: 36, borderRadius: 18 }} />
-                ) : (
-                    <View
-                        style={{
-                            width: 36,
-                            height: 36,
-                            borderRadius: 18,
-                            backgroundColor: "rgba(120,120,128,0.24)",
-                            alignItems: "center",
-                            justifyContent: "center",
-                        }}
-                    >
-                        <Text style={{ color, fontSize: 14 }}>?</Text>
-                    </View>
-                )}
+                <TouchableOpacity onPress={() => setHidden((h: boolean) => !h)}>
+                    {hidden ? (
+                        <View
+                            style={{
+                                width: 36,
+                                height: 36,
+                                borderRadius: 18,
+                                backgroundColor: "rgba(120,120,128,0.24)",
+                                alignItems: "center",
+                                justifyContent: "center",
+                            }}
+                        >
+                            {EYE_HIDDEN_ICON ? (
+                                <Image source={EYE_HIDDEN_ICON} style={{ width: 18, height: 18, tintColor: color }} />
+                            ) : (
+                                <Text style={{ color, fontSize: 14 }}>-</Text>
+                            )}
+                        </View>
+                    ) : uri ? (
+                        <Image source={{ uri }} style={{ width: 36, height: 36, borderRadius: 18 }} />
+                    ) : (
+                        <View
+                            style={{
+                                width: 36,
+                                height: 36,
+                                borderRadius: 18,
+                                backgroundColor: "rgba(120,120,128,0.24)",
+                                alignItems: "center",
+                                justifyContent: "center",
+                            }}
+                        >
+                            <Text style={{ color, fontSize: 14 }}>?</Text>
+                        </View>
+                    )}
+                </TouchableOpacity>
                 <View style={{ minWidth: 36, alignItems: "center" }}>
                     <Text numberOfLines={1} style={{ color, fontSize: 11, marginTop: 3, textAlign: "center" }}>{label}</Text>
                 </View>
@@ -205,7 +234,11 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
                         style={{ marginRight: 12 }}
                     />
                     <TouchableOpacity onPress={() => removeEntry(entry.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Text style={{ color: COLORS.danger, fontSize: 18, fontWeight: "700" }}>✕</Text>
+                        {TRASH_ICON ? (
+                            <Image source={TRASH_ICON} style={{ width: 18, height: 18, tintColor: COLORS.danger }} />
+                        ) : (
+                            <Text style={{ color: COLORS.danger, fontSize: 18, fontWeight: "700" }}>✕</Text>
+                        )}
                     </TouchableOpacity>
                 </View>
             </View>
