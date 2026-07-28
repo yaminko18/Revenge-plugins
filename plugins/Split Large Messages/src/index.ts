@@ -52,7 +52,7 @@ export default {
         const ChannelStore = findByStoreName("ChannelStore");
         const MessageActions = findByProps("sendMessage", "editMessage");
         const Constants = findByProps("MAX_MESSAGE_LENGTH");
-        const maxLength = findByStoreName("UserStore").getCurrentUser()?.premiumType === 2 ? 4000 : 2000;
+        const maxLength = findByStoreName("UserStore").getCurrentUser()?.premiumType === 2 ? 4000 : 1950;
 
         Constants.MAX_MESSAGE_LENGTH = 2 ** 30;
         Constants.MAX_MESSAGE_LENGTH_PREMIUM = 2 ** 30;
