@@ -1,5 +1,5 @@
 import { findByStoreName } from "@vendetta/metro";
-import { ReactNative, React } from "@vendetta/metro/common";
+import { ReactNative } from "@vendetta/metro/common";
 import { getAssetIDByName } from "@vendetta/ui/assets";
 import { semanticColors } from "@vendetta/ui";
 import { storage } from "@vendetta/plugin";
@@ -25,6 +25,8 @@ interface OverrideEntry {
     userId: string;
     imageUrl: string;
     enabled?: boolean;
+    hideOriginal?: boolean;
+    hideNew?: boolean;
 }
 
 // Default avatar presets, shown as color swatches so a user can be given a
@@ -33,7 +35,7 @@ interface OverrideEntry {
 // or any other static host) - swap the "url" values below for the real ones.
 // Single place to change if you move the hosted avatars elsewhere -
 // every color's URL is built from this plus "<name>.png".
-const AVATAR_BASE_URL = "https://raw.githubusercontent.com/yaminko18/Revenge-plugins/main/plugins/staff-tags/src/avatars";
+const AVATAR_BASE_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/avatars";
 
 const DEFAULT_AVATAR_COLORS: { name: string; color: string }[] = [
     { name: "Red", color: "#FF1F1F" },
@@ -126,11 +128,7 @@ function updateEntry(id: string, patch: Partial<OverrideEntry>): void {
     );
 }
 
-function AvatarPreview({ label, uri, userId, color, showName }: { label: string; uri?: string; userId?: string; color: string; showName?: boolean }) {
-    // Local-only, settings-screen-only toggle - lets you hide the preview
-    // image (e.g. before screen sharing) without touching any stored data.
-    const [hidden, setHidden] = React.useState(false);
-
+function AvatarPreview({ label, uri, userId, color, showName, hidden, onToggle }: { label: string; uri?: string; userId?: string; color: string; showName?: boolean; hidden: boolean; onToggle: () => void }) {
     let user: any = null;
     if (userId && UserStore) {
         try {
@@ -146,7 +144,7 @@ function AvatarPreview({ label, uri, userId, color, showName }: { label: string;
     return (
         <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
             <View style={{ alignItems: "center" }}>
-                <TouchableOpacity onPress={() => setHidden((h: boolean) => !h)}>
+                <TouchableOpacity onPress={onToggle}>
                     {hidden ? (
                         <View
                             style={{
@@ -223,9 +221,24 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <View style={{ flexDirection: "row" }}>
                     <View style={{ marginRight: 16 }}>
-                        <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} userId={entry.userId} color={activeColor} />
+                        <AvatarPreview
+                            label="Original"
+                            uri={getDefaultAvatarUrl(entry.userId)}
+                            userId={entry.userId}
+                            color={activeColor}
+                            hidden={!!entry.hideOriginal}
+                            onToggle={() => updateEntry(entry.id, { hideOriginal: !entry.hideOriginal })}
+                        />
                     </View>
-                    <AvatarPreview label="New" uri={entry.imageUrl || undefined} userId={entry.userId} color={activeColor} showName />
+                    <AvatarPreview
+                        label="New"
+                        uri={entry.imageUrl || undefined}
+                        userId={entry.userId}
+                        color={activeColor}
+                        showName
+                        hidden={!!entry.hideNew}
+                        onToggle={() => updateEntry(entry.id, { hideNew: !entry.hideNew })}
+                    />
                 </View>
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <Switch
