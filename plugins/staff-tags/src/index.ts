@@ -1,4 +1,5 @@
-import { findByProps } from "@vendetta/metro";
+import { findByProps, findByStoreName } from "@vendetta/metro";
+import { FluxDispatcher } from "@vendetta/metro/common";
 import { after } from "@vendetta/patcher";
 import { storage } from "@vendetta/plugin";
 
@@ -84,6 +85,31 @@ export function onLoad() {
 
     const overrideCount = (storage.overrides || []).length;
     console.log(`${TAG} patches applied for ${overrideCount} user(s)`);
+
+    // Force a refresh for every active override right after the patch is
+    // in place. Without this, if the plugin finishes loading slightly
+    // after Discord already rendered someone's avatar (a race that can
+    // happen on app startup), that avatar is stuck showing the old image
+    // until something else causes it to re-render (e.g. switching
+    // screens). Dispatching USER_UPDATE tells Discord's UI to redraw it
+    // immediately instead.
+    try {
+        const UserStore = findByStoreName("UserStore");
+        if (UserStore) {
+            const entries = storage.overrides || [];
+            for (let i = 0; i < entries.length; i++) {
+                const entry = entries[i];
+                if (!entry || !entry.userId || entry.enabled === false) continue;
+                FluxDispatcher.dispatch({
+                    type: "USER_UPDATE",
+                    user: UserStore.getUser(entry.userId)
+                });
+            }
+            console.log(`${TAG} ui refreshed`);
+        }
+    } catch (e) {
+        console.log(`${TAG} could not trigger refresh:`, e.message);
+    }
 }
 
 export function onUnload() {
