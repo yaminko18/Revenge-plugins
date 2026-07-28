@@ -134,8 +134,8 @@ function AvatarPreview({ label, uri, userId, color, showName }: { label: string;
     const showUsername = !!username && !!displayName && username !== displayName;
 
     return (
-        <View>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
+            <View style={{ alignItems: "center" }}>
                 {uri ? (
                     <Image source={{ uri }} style={{ width: 36, height: 36, borderRadius: 18 }} />
                 ) : (
@@ -152,22 +152,22 @@ function AvatarPreview({ label, uri, userId, color, showName }: { label: string;
                         <Text style={{ color, fontSize: 14 }}>?</Text>
                     </View>
                 )}
-                {showName && (
-                    <View style={{ marginLeft: 8, flexShrink: 1 }}>
-                        <Text style={{ color, fontWeight: "600", fontSize: 13 }} numberOfLines={1}>
-                            {displayName ?? "Unknown user"}
+                <View style={{ minWidth: 36, alignItems: "center" }}>
+                    <Text numberOfLines={1} style={{ color, fontSize: 11, marginTop: 3, textAlign: "center" }}>{label}</Text>
+                </View>
+            </View>
+            {showName && (
+                <View style={{ marginLeft: 8, flexShrink: 1, justifyContent: "center", height: 36 }}>
+                    <Text style={{ color, fontWeight: "600", fontSize: 13 }} numberOfLines={1}>
+                        {displayName ?? "Unknown user"}
+                    </Text>
+                    {showUsername && (
+                        <Text style={{ color: "#949BA4", fontSize: 11 }} numberOfLines={1}>
+                            @{username}
                         </Text>
-                        {showUsername && (
-                            <Text style={{ color: "#949BA4", fontSize: 11 }} numberOfLines={1}>
-                                @{username}
-                            </Text>
-                        )}
-                    </View>
-                )}
-            </View>
-            <View style={{ minWidth: 36, alignItems: "center" }}>
-                <Text numberOfLines={1} style={{ color, fontSize: 11, marginTop: 3, textAlign: "center" }}>{label}</Text>
-            </View>
+                    )}
+                </View>
+            )}
         </View>
     );
 }
