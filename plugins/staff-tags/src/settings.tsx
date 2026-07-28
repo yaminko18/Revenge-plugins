@@ -121,7 +121,14 @@ function updateEntry(id: string, patch: Partial<OverrideEntry>): void {
 }
 
 function AvatarPreview({ label, uri, userId, color, showName }: { label: string; uri?: string; userId?: string; color: string; showName?: boolean }) {
-    const user = userId && UserStore ? UserStore.getUser(userId) : null;
+    let user: any = null;
+    if (userId && UserStore) {
+        try {
+            user = UserStore.getUser(userId);
+        } catch {
+            user = null;
+        }
+    }
     const displayName = user?.globalName || user?.username;
     const username = user?.username;
     const showUsername = !!username && !!displayName && username !== displayName;
@@ -186,7 +193,7 @@ function OverrideCard({ entry }: { entry: OverrideEntry }) {
         >
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <View style={{ flexDirection: "row" }}>
-                    <View style={{ marginRight: 18 }}>
+                    <View style={{ marginRight: 16 }}>
                         <AvatarPreview label="Original" uri={getDefaultAvatarUrl(entry.userId)} userId={entry.userId} color={activeColor} />
                     </View>
                     <AvatarPreview label="New" uri={entry.imageUrl || undefined} userId={entry.userId} color={activeColor} showName />
