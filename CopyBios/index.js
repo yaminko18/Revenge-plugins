@@ -1,4 +1,0 @@
-(function(){"use strict";(function(c,h,l){const s=h.findByName("RowManager");let a;const p=function(){a=l.after("generate",s.prototype,function(u,g){let[r]=u,{message:t}=g;if(r.rowType!==1||!t?.content||!t.embeds?.length&&!t.attachments?.length||t._labeled)return;t._labeled=!0;const o=[];if(t.embeds?.length){const n=[];for(const e of t.embeds)(e.type==="image"||e.type==="gifv")&&n.push(e.url);for(let e=0;e<n.length;e++)o.push({type:"link",content:[{type:"text",content:n[e]}],target:n[e]}),e<n.length-1&&o.push({type:"text",content:`
-`})}if(t.attachments?.length){const n=[];for(let e=0;e<t.attachments.length;e++)n.push({type:"text",content:t.attachments[e].filename}),e<t.attachments.length-1&&n.push({type:"text",content:`
-`});(t.content.length>0||o.length>0)&&n.push({type:"text",content:`
-`}),t.content.unshift(...n)}o.length>0&&t.content.push(...o)})},f=function(){a?.()};return c.onLoad=p,c.onUnload=f,c})({},vendetta.metro,vendetta.patcher)})();
