@@ -4,14 +4,13 @@
 
 <ul>
 <li>AnonymousFileNames</li>
-<li>CopyBios</li>
-<li>HideBlockedAndIgnoredMessages</li>
+  https://yaminko18.github.io/Revenge-plugins/AnonymousFileNames/
 <li>RichPresence</li>
+  https://yaminko18.github.io/Revenge-plugins/RichPresence/
 <li>Split Large Messages</li>
-<li>catbox.moe</li>
-<li>customVoiceMessages</li>
-<li>localedit</li>
-<li>nsfw-blur</li>
-<li>silentmessages</li>
+  https://yaminko18.github.io/Revenge-plugins/Split Large Messaged/
+<li>WhoReacted</li>
+  https://yaminko18.github.io/Revenge-plugins/WhoReacted/
 <li>OverrideUserAvatars</li>
+  https://yaminko18.github.io/Revenge-plugins/staff-tags/
 </ul>
