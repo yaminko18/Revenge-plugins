@@ -1,1 +1,0 @@
-{"name": "Override User Avatars","description": "Allows you to set custom profile pictures for multiple Discord users.","authors": [{"name": "Yaminko","id": "666"}],"main": "src/index.ts","vendetta": {"icon": "ic_group"}}
