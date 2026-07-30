@@ -1,35 +1,21 @@
 /*
- * WhoReacted — port pre Revenge (Vendetta/Bunny-based mobile Discord mod)
+ * WhoReacted — DEBUG verzia (dočasná, na diagnostiku prečo sa nič nezobrazuje)
  * Pôvodne Vencord plugin (Copyright (c) 2022 Vendicated and contributors, GPLv3)
  *
- * DÔLEŽITÉ ohľadom časovania patchu:
- * Overili sme naživo (cez Metro require debug session), že komponent
- * `MessageReactionsContent` (modul s __filePath
- * "modules/reactions/native/MessageReactionsContent.tsx") je zrejme niekde
- * destrukturovaný pri prvom require (`const { MessageReactionsContent } =
- * require(...)`) do lokálnej premennej svojho rodiča. Prepisovanie
- * `module.exports.MessageReactionsContent` PO tom, čo appka už beží a
- * obrazovka so správami sa už raz vykreslila, preto nezaberá — rodič si
- * drží starú referenciu.
+ * Táto verzia pridáva logger.log na každý kritický krok:
+ *   1. Spustil sa vôbec onLoad?
+ *   2. Našiel sa modul MessageReactionsContent?
+ *   3. Zavolal sa vôbec náš instead() patch?
+ *   4. Má props.reactions dáta, ako čakáme?
  *
- * ➜ Tento patch preto MUSÍ byť aplikovaný v onLoad() pluginu, ktorý sa
- * nahrá HNEĎ pri štarte Revenge/Discordu — teda skôr, než čokoľvek stihne
- * message-reactions modul po prvýkrát vyžiadať. Po inštalácii/zmene tohto
- * pluginu preto appku VŽDY reštartuj úplne (force-stop, nie len reload JS),
- * inak môže byť modul už inicializovaný a patch znova nezaberie.
+ * Namiesto AvatarPile/Avatar (ktoré môžu zlyhať potichu, keď je čo i len
+ * jeden prop v nesprávnom tvare) vraciame najprv čistý viditeľný text —
+ * najjednoduchší možný test, či sa vôbec niečo z nášho kódu dostane do
+ * vykresleného stromu.
  *
- * Overené naživo (Metro require, module ID sa môžu medzi verziami/buildmi
- * meniť — preto hľadáme podľa __filePath, nie podľa pevného ID):
- *   - "modules/reactions/native/MessageReactionsContent.tsx"
- *       exports: useReactors, useReactorsOnScrollNative,
- *                MessageReactionsEmpty, MessageReactionsContent
- *       MessageReactionsContent props: channelId, messageId, emoji,
- *                reactions, isSelectedBurst, disableManage, disableTabs
- *   - "AvatarPile" modul → export AvatarPile
- *       props: size, totalCount, names, children (pole <Avatar>, nie users!)
- *   - "AvatarSizes" modul → default = React.memo(Avatar), AvatarSizes = konštanty
- *       Avatar props: user, size, source, guildId, status, animate,
- *                avatarDecoration, mute, deaf, ...
+ * Sleduj logy cez Revenge Settings → Developer → Logs (alebo ekvivalent),
+ * prípadne cez /bfeval: typeof globalThis.__wr_debug potom
+ * JSON.stringify(globalThis.__wr_debug)
  */
 
 import { findByProps, findByStoreName } from "@vendetta/metro";
@@ -37,9 +23,16 @@ import { FluxDispatcher, React } from "@vendetta/metro/common";
 import { instead, before } from "@vendetta/patcher";
 import { logger } from "@vendetta";
 
+(globalThis as any).__wr_debug = (globalThis as any).__wr_debug ?? [];
+function dbg(msg: string, data?: any) {
+    const line = `[WhoReacted DEBUG] ${msg}`;
+    logger.log(line, data ?? "");
+    (globalThis as any).__wr_debug.push({ msg, data, t: Date.now() });
+}
+
 const ChannelStore = findByStoreName("ChannelStore");
 const UserStore = findByStoreName("UserStore");
-const RestAPI = findByProps("getAPIBaseURL", "get"); // OVER: názov exportu sa môže líšiť
+const RestAPI = findByProps("getAPIBaseURL", "get");
 const Constants = findByProps("Endpoints");
 
 const { AvatarPile } = findByProps("AvatarPile") ?? {};
@@ -47,10 +40,6 @@ const AvatarModule = findByProps("AvatarSizes") ?? {};
 const Avatar = AvatarModule.default;
 const AvatarSizes = AvatarModule.AvatarSizes ?? { XSMALL: "xsmall" };
 
-// Nájde Metro modul podľa konca cesty k súboru (funguje aj keď sa číselné
-// ID medzi buildmi zmenia). Vyhýba sa require()-ovaniu ešte neinicializovaných
-// modulov navyše (aby sme nespôsobili tú istú "predčasnú inicializáciu",
-// čo nám prekazila live-eval experimenty) tým, že číta len metadata.
 function findModuleExportsByFilePathSuffix(suffix: string): any | null {
     const reg = (globalThis as any).modules;
     if (!reg) return null;
@@ -82,16 +71,17 @@ function enqueue(task: () => Promise<void>) {
 
 function fetchReactions(msg: any, emoji: any, type: number) {
     const key = emoji.name + (emoji.id ? `:${emoji.id}` : "");
+    dbg("fetchReactions volané", { channel: msg.channel_id, message: msg.id, key });
     return RestAPI.get({
         url: Constants.Endpoints.REACTIONS(msg.channel_id, msg.id, key),
         query: { limit: 100, type },
         oldFormErrors: true
     })
         .then((res: any) => {
+            dbg("fetchReactions OK", { count: res?.body?.length });
             for (const user of res.body) {
                 FluxDispatcher.dispatch({ type: "USER_UPDATE", user });
             }
-
             FluxDispatcher.dispatch({
                 type: "MESSAGE_REACTION_ADD_USERS",
                 channelId: msg.channel_id,
@@ -101,7 +91,7 @@ function fetchReactions(msg: any, emoji: any, type: number) {
                 reactionType: type
             });
         })
-        .catch((e: any) => logger.error("[WhoReacted]", e))
+        .catch((e: any) => dbg("fetchReactions CHYBA", String(e)))
         .finally(() => sleep(250));
 }
 
@@ -117,10 +107,11 @@ function getReactionsWithQueue(msg: any, e: any, type: number) {
 
 function useForceUpdate() {
     const [, setTick] = React.useState(0);
-    return React.useCallback(() => setTick(t => t + 1), []);
+    return React.useCallback(() => setTick((t: number) => t + 1), []);
 }
 
 function ReactionUsers({ message, emoji, type }: { message: any; emoji: any; type: number }) {
+    dbg("ReactionUsers RENDER", { messageId: message.id, emoji: emoji?.name });
     const forceUpdate = useForceUpdate();
 
     React.useEffect(() => {
@@ -134,41 +125,46 @@ function ReactionUsers({ message, emoji, type }: { message: any; emoji: any; typ
     const reactionUsers = getReactionsWithQueue(message, emoji, type);
     const users = Array.from(reactionUsers, ([id]) => UserStore.getUser(id)).filter(Boolean);
 
-    if (!AvatarPile || !Avatar) return null; // komponenty sa nenašli — nič nerenderuj namiesto crashu
-
-    const guildId = ChannelStore.getChannel(message.channel_id)?.guild_id;
-
-    // AvatarPile berie `children` (pole jednotlivých avatarov), nie `users`.
-    // Avatar berie `user` objekt priamo (nie len id).
+    // ─── DEBUG: namiesto AvatarPile/Avatar vraciame čistý text ───
     return (
-        <AvatarPile
-            size={AvatarSizes.XSMALL}
-            totalCount={users.length}
-            names={users.map((u: any) => u.username)}
-        >
-            {users.map((u: any) => (
-                <Avatar key={u.id} user={u} size={AvatarSizes.XSMALL} guildId={guildId} />
-            ))}
-        </AvatarPile>
+        <>
+            {" 🔥[" + users.length + " users]🔥"}
+        </>
     );
+
+    // Pôvodná (finálna) verzia — zapoj späť, keď debug text funguje:
+    // if (!AvatarPile || !Avatar) return null;
+    // const guildId = ChannelStore.getChannel(message.channel_id)?.guild_id;
+    // return (
+    //     <AvatarPile size={AvatarSizes.XSMALL} totalCount={users.length} names={users.map((u: any) => u.username)}>
+    //         {users.map((u: any) => <Avatar key={u.id} user={u} size={AvatarSizes.XSMALL} guildId={guildId} />)}
+    //     </AvatarPile>
+    // );
 }
 
 export function onLoad() {
+    dbg("onLoad spustený");
+
     const ReactionsModule = findModuleExportsByFilePathSuffix(
         "modules/reactions/native/MessageReactionsContent.tsx"
     );
 
+    dbg("hľadanie modulu dokončené", { found: !!ReactionsModule?.MessageReactionsContent });
+
     if (ReactionsModule?.MessageReactionsContent) {
-        // instead() nám dá plnú kontrolu: zavoláme pôvodnú funkciu (orig),
-        // a k jej výstupu pripojíme náš <ReactionUsers> hneď vedľa/pod
-        // pôvodné reakcie. `props[0]` obsahuje channelId/messageId/
-        // reactions/emoji presne tak, ako sme si to overili naživo.
         patches.push(
             instead("MessageReactionsContent", ReactionsModule, (args: any[], orig: (...a: any[]) => any) => {
+                dbg("instead() patch ZAVOLANÝ", { propsKeys: args[0] ? Object.keys(args[0]) : null });
+
                 const [props] = args;
                 const original = orig(...args);
 
-                if (!props?.reactions?.length) return original;
+                if (!props?.reactions?.length) {
+                    dbg("žiadne props.reactions — vraciam original bez zmeny", { reactions: props?.reactions });
+                    return original;
+                }
+
+                dbg("props.reactions nájdené", { count: props.reactions.length });
 
                 const message = { id: props.messageId, channel_id: props.channelId };
 
@@ -187,13 +183,11 @@ export function onLoad() {
                 );
             })
         );
+        dbg("instead() patch nastavený");
     } else {
-        logger.error(
-            "[WhoReacted] Nenašiel sa modul MessageReactionsContent cez __filePath — over, či sa cesta nezmenila."
-        );
+        dbg("CHYBA: modul MessageReactionsContent sa nenašiel");
     }
 
-    // Zdieľanie cache objektu reactions medzi FluxStore a pluginom (ako vo Vencorde)
     const MessageReactionsStore = findByStoreName("MessageReactionsStore");
     if (MessageReactionsStore) {
         patches.push(
