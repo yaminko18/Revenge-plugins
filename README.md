@@ -5,8 +5,8 @@
 <ul>
 <li>AnonymousFileNames</li>
   https://yaminko18.github.io/Revenge-plugins/AnonymousFileNames/
-<li>RichPresence</li>
-  https://yaminko18.github.io/Revenge-plugins/RichPresence/
+<li>CzechMonthTranslate</li>
+  https://yaminko18.github.io/Revenge-plugins/CzechMonthTranslate/
 <li>Split Large Messages</li>
   https://yaminko18.github.io/Revenge-plugins/Split Large Messaged/
 <li>WhoReacted</li>
