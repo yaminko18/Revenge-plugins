@@ -60,6 +60,26 @@ export function generateKeyPair(): KeyPair {
 }
 
 /**
+ * Odvodí kompletný keypair (public + secret) z ručne vloženého súkromného kľúča
+ * (base64). Používa sa pri manuálnej zmene súkromného kľúča v nastaveniach -
+ * verejný kľúč sa musí prepočítať nanovo, nemôže zostať pôvodný.
+ * Vracia null, ak vstup nie je platný Curve25519 secret key (zlá dĺžka a pod.).
+ */
+export function keyPairFromSecretKey(secretKeyB64: string): KeyPair | null {
+    try {
+        const secretKey = base64ToBytes(secretKeyB64)
+        if (secretKey.length !== nacl.box.secretKeyLength) return null
+        const kp = nacl.box.keyPair.fromSecretKey(secretKey)
+        return {
+            publicKey: bytesToBase64(kp.publicKey),
+            secretKey: bytesToBase64(kp.secretKey),
+        }
+    } catch {
+        return null
+    }
+}
+
+/**
  * Zašifruje text pre daného príjemcu (Curve25519 + XSalsa20-Poly1305, cez nacl.box).
  * Vracia jeden base64 reťazec: nonce + ciphertext spojené za sebou (žiadny oddeľovač/značka),
  * alebo null pri chybe (zlý kľúč a pod.).
