@@ -37,7 +37,20 @@ function removeContact(userId: string) {
     storage.e2e = { ...storage.e2e, contacts }
 }
 
-function ContactCard({ userId, contact, name }: { userId: string; contact: E2EContact; name: string }) {
+interface UserDisplay {
+    displayName: string
+    username?: string
+}
+
+function ContactCard({
+    userId,
+    contact,
+    display,
+}: {
+    userId: string
+    contact: E2EContact
+    display: UserDisplay
+}) {
     const activeColor = contact.enabled ? COLORS.text : COLORS.muted
 
     return (
@@ -53,9 +66,16 @@ function ContactCard({ userId, contact, name }: { userId: string; contact: E2ECo
             }}
         >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                <Text style={{ color: activeColor, fontWeight: '600', fontSize: 15 }} numberOfLines={1}>
-                    {name}
-                </Text>
+                <View style={{ flexShrink: 1 }}>
+                    <Text style={{ color: activeColor, fontWeight: '600', fontSize: 15 }} numberOfLines={1}>
+                        {display.displayName}
+                    </Text>
+                    {display.username && (
+                        <Text style={{ color: COLORS.muted, fontSize: 12 }} numberOfLines={1}>
+                            @{display.username}
+                        </Text>
+                    )}
+                </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Switch
                         value={contact.enabled}
@@ -91,6 +111,7 @@ export default () => {
     useProxy(storage)
 
     const [pickerOpen, setPickerOpen] = useState(false)
+    const [privateKeyRevealed, setPrivateKeyRevealed] = useState(false)
 
     const { dmChannels, UserStore } = useMemo(() => {
         let dmChannels: any[] = []
@@ -110,9 +131,15 @@ export default () => {
         return id ?? null
     }
 
-    function getRecipientName(userId: string): string {
+    // Rovnaký princíp ako v referenčnom pluginu: zobraz displayName, a pod ním
+    // @username len ak sa od displayName reálne líši (inak by to bolo zbytočne
+    // duplicitné).
+    function getRecipientDisplay(userId: string): UserDisplay {
         const user = UserStore?.getUser?.(userId)
-        return user?.globalName ?? user?.username ?? userId
+        const displayName = user?.globalName ?? user?.username ?? userId
+        const username = user?.username
+        const showUsername = !!username && username !== displayName
+        return { displayName, username: showUsername ? username : undefined }
     }
 
     const contacts: Record<string, E2EContact> = storage.e2e?.contacts ?? {}
@@ -125,10 +152,19 @@ export default () => {
         return userId && !contacts[userId]
     })
 
-    const copyOwnKey = () => {
+    const copyOwnPublicKey = () => {
         if (!storage.e2e?.keyPair?.publicKey) return
         clipboard.setString(storage.e2e.keyPair.publicKey)
         showToast('Verejný kľúč skopírovaný do schránky', getAssetIDByName('CopyIcon'))
+    }
+
+    // Súkromný kľúč je skrytý, kým naň klikneš - odhalí sa aj rovno skopíruje.
+    // Tento kľúč sa nesmie dostať k nikomu inému.
+    const revealAndCopyPrivateKey = () => {
+        if (!storage.e2e?.keyPair?.secretKey) return
+        setPrivateKeyRevealed(true)
+        clipboard.setString(storage.e2e.keyPair.secretKey)
+        showToast('Súkromný kľúč skopírovaný - nikomu ho neposielaj!', getAssetIDByName('ic_warning_24px'))
     }
 
     return (
@@ -139,10 +175,10 @@ export default () => {
             </Text>
 
             <TouchableOpacity
-                onPress={copyOwnKey}
+                onPress={copyOwnPublicKey}
                 style={{
                     marginHorizontal: 16,
-                    marginBottom: 12,
+                    marginBottom: 8,
                     padding: 10,
                     borderRadius: 8,
                     backgroundColor: 'rgba(120,120,128,0.12)',
@@ -154,8 +190,26 @@ export default () => {
                 </Text>
             </TouchableOpacity>
 
+            <TouchableOpacity
+                onPress={revealAndCopyPrivateKey}
+                style={{
+                    marginHorizontal: 16,
+                    marginBottom: 12,
+                    padding: 10,
+                    borderRadius: 8,
+                    backgroundColor: 'rgba(242,63,66,0.12)',
+                }}
+            >
+                <Text style={{ color: COLORS.danger, fontSize: 12 }}>
+                    Môj súkromný kľúč (klikni pre zobrazenie a kopírovanie - nikdy ho nikomu neposielaj)
+                </Text>
+                <Text style={{ color: COLORS.text, fontSize: 13, marginTop: 2 }}>
+                    {privateKeyRevealed ? truncateKey(storage.e2e?.keyPair?.secretKey ?? '') : '••••••••••••••••••••'}
+                </Text>
+            </TouchableOpacity>
+
             {contactIds.map(userId => (
-                <ContactCard key={userId} userId={userId} contact={contacts[userId]} name={getRecipientName(userId)} />
+                <ContactCard key={userId} userId={userId} contact={contacts[userId]} display={getRecipientDisplay(userId)} />
             ))}
 
             <TouchableOpacity
@@ -186,6 +240,7 @@ export default () => {
                     ) : (
                         availableChannels.map((channel: any) => {
                             const userId = getRecipientId(channel)!
+                            const display = getRecipientDisplay(userId)
                             return (
                                 <TouchableOpacity
                                     key={channel.id}
@@ -201,7 +256,10 @@ export default () => {
                                         marginBottom: 4,
                                     }}
                                 >
-                                    <Text style={{ color: COLORS.text, fontSize: 14 }}>{getRecipientName(userId)}</Text>
+                                    <Text style={{ color: COLORS.text, fontSize: 14 }}>{display.displayName}</Text>
+                                    {display.username && (
+                                        <Text style={{ color: COLORS.muted, fontSize: 12 }}>@{display.username}</Text>
+                                    )}
                                 </TouchableOpacity>
                             )
                         })
