@@ -6,9 +6,10 @@ import { semanticColors } from '@vendetta/ui'
 import { getAssetIDByName } from '@vendetta/ui/assets'
 import { showToast } from '@vendetta/ui/toasts'
 
+import { keyPairFromSecretKey } from './lib/crypto'
 import type { E2EContact } from './def'
 
-const { View, Text, ScrollView, TouchableOpacity, TextInput, Switch } = RN
+const { View, Text, ScrollView, TouchableOpacity, TextInput, Switch, Alert } = RN
 const { useMemo, useState } = React
 
 const COLORS = {
@@ -112,6 +113,8 @@ export default () => {
 
     const [pickerOpen, setPickerOpen] = useState(false)
     const [privateKeyRevealed, setPrivateKeyRevealed] = useState(false)
+    const [changeKeyOpen, setChangeKeyOpen] = useState(false)
+    const [newSecretKeyInput, setNewSecretKeyInput] = useState('')
 
     const { dmChannels, UserStore } = useMemo(() => {
         let dmChannels: any[] = []
@@ -167,6 +170,66 @@ export default () => {
         showToast('Private key copied - never send this to anyone!', getAssetIDByName('ic_warning_24px'))
     }
 
+    // Zmena súkromného kľúča je zámerne "zaklikaná" za dve varovania, kým sa
+    // vôbec zobrazí pole na vloženie nového kľúča - je to nezvratná operácia
+    // (staré správy zašifrované starým kľúčom sa už nedešifrujú) a chceme
+    // predísť omylom (napr. náhodné vloženie niečoho zo schránky).
+    const requestChangePrivateKey = () => {
+        Alert.alert(
+            'Change private key',
+            'Replacing your private key changes your identity for E2E encryption. Messages encrypted with the old key will no longer be decryptable unless you have it backed up. Do you want to continue?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Continue', style: 'destructive', onPress: confirmChangePrivateKeyStepTwo },
+            ],
+        )
+    }
+
+    const confirmChangePrivateKeyStepTwo = () => {
+        Alert.alert(
+            'Are you sure?',
+            'This cannot be undone. Make sure you have safely backed up your current key before continuing - otherwise you will permanently lose access to old messages. Only proceed if you know what you are doing.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Yes, enter a new key', style: 'destructive', onPress: () => setChangeKeyOpen(true) },
+            ],
+        )
+    }
+
+    const cancelChangePrivateKey = () => {
+        setChangeKeyOpen(false)
+        setNewSecretKeyInput('')
+    }
+
+    // Tretie (posledné) potvrdenie - už po vložení konkrétneho kľúča a jeho
+    // úspešnej validácii, tesne pred samotným zápisom do storage.
+    const submitNewPrivateKey = () => {
+        const newKeyPair = keyPairFromSecretKey(newSecretKeyInput.trim())
+        if (!newKeyPair) {
+            Alert.alert('Invalid key', 'The entered text is not a valid Curve25519 private key (check the format/base64).')
+            return
+        }
+
+        Alert.alert(
+            'Really replace the key?',
+            'This action is immediate and cannot be reversed. Your public key will also change, so your contacts will need your new public key to keep messaging you.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Yes, replace it',
+                    style: 'destructive',
+                    onPress: () => {
+                        storage.e2e = { ...storage.e2e, keyPair: newKeyPair }
+                        setChangeKeyOpen(false)
+                        setNewSecretKeyInput('')
+                        setPrivateKeyRevealed(false)
+                        showToast('Private key replaced', getAssetIDByName('ic_warning_24px'))
+                    },
+                },
+            ],
+        )
+    }
+
     return (
         <ScrollView>
             <Text style={{ color: COLORS.muted, fontSize: 13, marginHorizontal: 16, marginTop: 10, marginBottom: 6 }}>
@@ -190,8 +253,7 @@ export default () => {
                 </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-                onPress={revealAndCopyPrivateKey}
+            <View
                 style={{
                     marginHorizontal: 16,
                     marginBottom: 12,
@@ -200,13 +262,69 @@ export default () => {
                     backgroundColor: 'rgba(242,63,66,0.12)',
                 }}
             >
-                <Text style={{ color: COLORS.danger, fontSize: 12 }}>
-                    My private key (tap to reveal and copy - never send this to anyone)
-                </Text>
-                <Text style={{ color: COLORS.text, fontSize: 13, marginTop: 2 }}>
-                    {privateKeyRevealed ? truncateKey(storage.e2e?.keyPair?.secretKey ?? '') : '••••••••••••••••••••'}
-                </Text>
-            </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                    <TouchableOpacity onPress={revealAndCopyPrivateKey} style={{ flex: 1, marginRight: 8 }}>
+                        <Text style={{ color: COLORS.danger, fontSize: 12 }}>
+                            My private key (tap to reveal and copy - never send this to anyone)
+                        </Text>
+                        <Text style={{ color: COLORS.text, fontSize: 13, marginTop: 2 }}>
+                            {privateKeyRevealed ? truncateKey(storage.e2e?.keyPair?.secretKey ?? '') : '••••••••••••••••••••'}
+                        </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        onPress={requestChangePrivateKey}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                            borderRadius: 6,
+                            backgroundColor: 'rgba(242,63,66,0.25)',
+                        }}
+                    >
+                        <Text style={{ color: COLORS.danger, fontSize: 11, fontWeight: '700' }}>Change</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {changeKeyOpen && (
+                    <View style={{ marginTop: 10 }}>
+                        <Text style={{ color: COLORS.danger, fontSize: 11, marginBottom: 4 }}>
+                            Paste the new private key below. This replaces your current key.
+                        </Text>
+                        <TextInput
+                            placeholder="New private key"
+                            placeholderTextColor={COLORS.muted}
+                            value={newSecretKeyInput}
+                            onChangeText={setNewSecretKeyInput}
+                            secureTextEntry
+                            style={{
+                                color: COLORS.text,
+                                backgroundColor: 'rgba(120,120,128,0.16)',
+                                borderRadius: 8,
+                                paddingHorizontal: 10,
+                                paddingVertical: 8,
+                                fontSize: 14,
+                                marginBottom: 8,
+                            }}
+                        />
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                            <TouchableOpacity onPress={cancelChangePrivateKey} style={{ paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 }}>
+                                <Text style={{ color: COLORS.muted, fontSize: 13 }}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                onPress={submitNewPrivateKey}
+                                style={{
+                                    paddingHorizontal: 12,
+                                    paddingVertical: 6,
+                                    borderRadius: 6,
+                                    backgroundColor: COLORS.danger,
+                                }}
+                            >
+                                <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '600' }}>Save</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                )}
+            </View>
 
             {contactIds.map(userId => (
                 <ContactCard key={userId} userId={userId} contact={contacts[userId]} display={getRecipientDisplay(userId)} />
