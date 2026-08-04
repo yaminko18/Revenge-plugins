@@ -19,7 +19,7 @@ const COLORS = {
 }
 
 function truncateKey(key: string): string {
-    if (!key) return 'Kľúč sa ešte negeneruje...'
+    if (!key) return 'Key not generated yet...'
     return key.length > 20 ? `${key.slice(0, 10)}...${key.slice(-10)}` : key
 }
 
@@ -88,9 +88,9 @@ function ContactCard({
                 </View>
             </View>
 
-            <Text style={{ color: activeColor, fontSize: 12, marginBottom: 1 }}>Verejný kľúč tejto osoby</Text>
+            <Text style={{ color: activeColor, fontSize: 12, marginBottom: 1 }}>This person's public key</Text>
             <TextInput
-                placeholder="Vlož verejný kľúč"
+                placeholder="Enter public key"
                 placeholderTextColor={COLORS.muted}
                 value={contact.publicKey}
                 onChangeText={(v: string) => setContact(userId, { publicKey: v.trim() })}
@@ -155,7 +155,7 @@ export default () => {
     const copyOwnPublicKey = () => {
         if (!storage.e2e?.keyPair?.publicKey) return
         clipboard.setString(storage.e2e.keyPair.publicKey)
-        showToast('Verejný kľúč skopírovaný do schránky', getAssetIDByName('CopyIcon'))
+        showToast('Public key copied to clipboard', getAssetIDByName('CopyIcon'))
     }
 
     // Súkromný kľúč je skrytý, kým naň klikneš - odhalí sa aj rovno skopíruje.
@@ -164,14 +164,14 @@ export default () => {
         if (!storage.e2e?.keyPair?.secretKey) return
         setPrivateKeyRevealed(true)
         clipboard.setString(storage.e2e.keyPair.secretKey)
-        showToast('Súkromný kľúč skopírovaný - nikomu ho neposielaj!', getAssetIDByName('ic_warning_24px'))
+        showToast('Private key copied - never send this to anyone!', getAssetIDByName('ic_warning_24px'))
     }
 
     return (
         <ScrollView>
             <Text style={{ color: COLORS.muted, fontSize: 13, marginHorizontal: 16, marginTop: 10, marginBottom: 6 }}>
-                E2E šifrovanie funguje len pre 1:1 DM. Pridaj používateľa zo zoznamu nižšie, vlož jeho verejný
-                kľúč a zapni prepínač - šifrovanie sa aktivuje len pre tú konkrétnu osobu.
+                E2E encryption only works for 1:1 DMs. Add a user from the list below, paste their public
+                key, and turn on the switch - encryption will be activated only for that specific person.
             </Text>
 
             <TouchableOpacity
@@ -184,7 +184,7 @@ export default () => {
                     backgroundColor: 'rgba(120,120,128,0.12)',
                 }}
             >
-                <Text style={{ color: COLORS.muted, fontSize: 12 }}>Môj verejný kľúč (klikni pre kopírovanie)</Text>
+                <Text style={{ color: COLORS.muted, fontSize: 12 }}>My public key (tap to copy)</Text>
                 <Text style={{ color: COLORS.text, fontSize: 13, marginTop: 2 }}>
                     {truncateKey(storage.e2e?.keyPair?.publicKey ?? '')}
                 </Text>
@@ -201,7 +201,7 @@ export default () => {
                 }}
             >
                 <Text style={{ color: COLORS.danger, fontSize: 12 }}>
-                    Môj súkromný kľúč (klikni pre zobrazenie a kopírovanie - nikdy ho nikomu neposielaj)
+                    My private key (tap to reveal and copy - never send this to anyone)
                 </Text>
                 <Text style={{ color: COLORS.text, fontSize: 13, marginTop: 2 }}>
                     {privateKeyRevealed ? truncateKey(storage.e2e?.keyPair?.secretKey ?? '') : '••••••••••••••••••••'}
@@ -228,14 +228,14 @@ export default () => {
                 }}
             >
                 <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700', marginRight: 6 }}>+</Text>
-                <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: 15 }}>Pridať používateľa</Text>
+                <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: 15 }}>Add user</Text>
             </TouchableOpacity>
 
             {pickerOpen && (
                 <View style={{ marginHorizontal: 12, marginBottom: 16 }}>
                     {availableChannels.length === 0 ? (
                         <Text style={{ color: COLORS.muted, fontSize: 13, textAlign: 'center', padding: 12 }}>
-                            Všetky tvoje DM konverzácie sú už pridané.
+                            All your DM conversations have already been added.
                         </Text>
                     ) : (
                         availableChannels.map((channel: any) => {
