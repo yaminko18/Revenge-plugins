@@ -19,7 +19,7 @@ function tryEncrypt(channelId: string, data: { content?: string }, warnOnMissing
     if (encrypted) {
         data.content = encrypted
     } else if (warnOnMissingKey) {
-        showToast('E2E: chýba verejný kľúč príjemcu, správa ide nezašifrovaná', Warning)
+        showToast("E2E: recipient's public key is missing, message will be sent unencrypted", Warning)
     }
 }
 
