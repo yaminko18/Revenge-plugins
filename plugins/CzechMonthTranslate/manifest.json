@@ -1,1 +1,7 @@
-
+{
+	"name": "CzechMonthTranslate",
+	"description": "Prekladá české názvy mesiacov v správach do slovenčiny.",
+	"authors": [{ "name": "Yaminko", "id": "666" }],
+	"main": "./src/index.js",
+	"vendetta": { "icon": "ThemeDarkIcon" }
+}
