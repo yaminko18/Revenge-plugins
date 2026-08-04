@@ -1,1 +1,112 @@
+import { FluxDispatcher } from "@vendetta/metro/common";
+import { before as patchBefore } from "@vendetta/patcher";
+import { storage } from "@vendetta/plugin";
+import settings from "./settings.jsx";
 
+const czechToSlovakMonths = {
+    // s diakritikou
+    "leden": "január", "ledna": "januára", "lednu": "januári", "lednem": "januárom",
+    "únor": "február", "února": "februára", "únoru": "februári", "únorem": "februárom",
+    "březen": "marec", "března": "marca", "březnu": "marci", "březnem": "marcom",
+    "duben": "apríl", "dubna": "apríla", "dubnu": "apríli", "dubnem": "aprílom",
+    "květen": "máj", "května": "mája", "květnu": "máji", "květnem": "májom",
+    "červen": "jún", "června": "júna", "červnu": "júni", "červnem": "júnom",
+    "červenec": "júl", "července": "júla", "červenci": "júli", "červencem": "júlom",
+    "srpen": "august", "srpna": "augusta", "srpnu": "auguste", "srpnem": "augustom",
+    "září": "september",
+    "říjen": "október", "října": "októbra", "říjnu": "októbri", "říjnem": "októbrom",
+    "v listopadu": "v novembri", "listopadu": "novembra", "listopad": "november", "listopadem": "novembrom",
+    "prosinec": "december", "prosince": "decembra", "prosinci": "decembri", "prosincem": "decembrom",
+
+    // bez diakritiky
+    "unor": "február", "unora": "februára", "unoru": "februári", "unorem": "februárom",
+    "brezen": "marec", "brezna": "marca", "breznu": "marci", "breznem": "marcom",
+    "kveten": "máj", "kvetna": "mája", "kvetnu": "máji", "kvetnem": "májom",
+    "cerven": "jún", "cervna": "júna", "cervnu": "júni", "cervnem": "júnom",
+    "cervenec": "júl", "cervence": "júla", "cervenci": "júli", "cervencem": "júlom",
+    "zari": "september",
+    "rijen": "október", "rijna": "októbra", "rijnu": "októbri", "rijnem": "októbrom",
+
+    // zmiešaná diakritika (ř/mäkčeň zostáva, dĺžne sa strácajú) - len říjen a září majú obe kombinácie
+    "řijen": "október", "řijna": "októbra", "řijnu": "októbri", "řijnem": "októbrom",
+    "zaři": "september",
+    "ríjen": "október", "ríjna": "októbra", "ríjnu": "októbri", "ríjnem": "októbrom",
+
+    // zvyšné kombinácie pre září (á / ř / í nezávisle zap/vyp - spolu všetkých 8)
+    "zarí": "september",
+    "zaří": "september",
+    "zári": "september",
+    "zárí": "september",
+    "záři": "september"
+};
+
+const sortedKeys = Object.keys(czechToSlovakMonths).sort((a, b) => b.length - a.length);
+const regexPattern = sortedKeys.map(k => k.replace(" ", "\\s+")).join('|');
+// URL (http/https alebo www.) sa zachytí ako celá skupina "url" a nikdy sa nenahrádza —
+// vďaka tomu sa slová vyzerajúce ako mesiace vo vnútri odkazov neprekladajú a link ostane funkčný.
+const urlPattern = "(?:https?:\\/\\/|www\\.)\\S+";
+const combinedRegex = new RegExp(`(?<url>${urlPattern})|(?<!\\p{L})(?<month>${regexPattern})(?!\\p{L})`, 'giu');
+
+let unpatch;
+
+function processMessage(msg, delay = 150) {
+    if (!msg?.content) return;
+
+    let changed = false;
+
+    const translatedText = msg.content.replace(combinedRegex, (match, ...args) => {
+        const groups = args[args.length - 1];
+
+        // Ide o URL adresu -> vrátiť bezo zmeny
+        if (groups?.url) return match;
+
+        const norm = match.replace(/\s+/g, ' ').toLowerCase();
+        let res = czechToSlovakMonths[norm];
+        if (!res) return match;
+
+        changed = true;
+
+        // Zachovanie veľkého písmena
+        if (match[0] === match[0].toUpperCase()) {
+            res = res.charAt(0).toUpperCase() + res.slice(1);
+        }
+
+        // Ak je zapnutý režim "Obidve", vrátime: pôvodné (**preklad**)
+        if (storage.overwriteMode && storage.showBoth) {
+            return `${match} (**${res}**)`;
+        }
+
+        return res;
+    });
+
+    if (!changed) return;
+
+    if (storage.overwriteMode) {
+        msg.content = translatedText;
+    } else {
+        setTimeout(() => {
+            FluxDispatcher.dispatch({
+                type: "MESSAGE_EDIT_FAILED_AUTOMOD",
+                messageData: { type: 1, message: { channelId: msg.channel_id || msg.channelId, messageId: msg.id } },
+                errorResponseBody: { code: 200000, message: `🇸🇰 Preklad: ${translatedText}` },
+            });
+        }, delay);
+    }
+}
+
+export default {
+    settings,
+    onLoad() {
+        storage.overwriteMode = storage.overwriteMode ?? false;
+        storage.showBoth = storage.showBoth ?? false;
+
+        unpatch = patchBefore("dispatch", FluxDispatcher, ([event]) => {
+            if (event?.type === "MESSAGE_CREATE" && event.message) processMessage(event.message, 150);
+            if (event?.type === "LOAD_MESSAGES_SUCCESS" && event.messages) {
+                event.messages.forEach((msg, i) => processMessage(msg, 200 + (i * 50)));
+            }
+            if (event?.type === "MESSAGE_UPDATE" && event.message) processMessage(event.message, 150);
+        });
+    },
+    onUnload() { if (unpatch) unpatch(); }
+};
