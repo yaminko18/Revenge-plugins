@@ -1,6 +1,6 @@
 import { initE2E } from './lib/e2e'
-import patchMessageDisplay from './patches/messageDisplay'
-import patchSendMessage from './patches/sendMessage'
+import patchMessageDisplay from './lib/messageDisplay'
+import patchSendMessage from './lib/sendMessage'
 import Settings from './settings'
 
 let patches: (() => void)[] = []
