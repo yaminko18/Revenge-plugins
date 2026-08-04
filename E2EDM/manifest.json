@@ -1,1 +1,1 @@
-{"name":"E2EDM","description":"Encrypts DM messages end-to-end so only you and the recipient can read them","authors":[{"name":"Yaminko","id":"666"}],"main":"index.js","vendetta":{"icon":"LockIcon"},"hash":"9a4ebe36fff9f04570ea5990b2faefaad5f61fd1268086ffb4caf21db48cd13f"}
+{"name":"E2EDM","description":"Encrypts DM messages end-to-end so only you and the recipient can read them","authors":[{"name":"Yaminko","id":"666"}],"main":"index.js","vendetta":{"icon":"LockIcon"},"hash":"adca01796d95818cfd8e6de5b80d4f3989af7dc8cbe29301c34bef2d8eb4e8f1"}
