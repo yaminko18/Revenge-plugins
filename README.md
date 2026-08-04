@@ -13,4 +13,6 @@
   https://yaminko18.github.io/Revenge-plugins/WhoReacted/
 <li>OverrideUserAvatars</li>
   https://yaminko18.github.io/Revenge-plugins/staff-tags/
+  <li>E2EDM</li>
+  https://yaminko18.github.io/Revenge-plugins/E2EDM/
 </ul>
