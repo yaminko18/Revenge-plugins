@@ -4,8 +4,7 @@ import { decryptMessage, encryptMessage, generateKeyPair } from './crypto'
 
 export function initE2E() {
     storage.e2e ??= {}
-    storage.e2e.enabled ??= false
-    storage.e2e.contacts ??= {} // { [userId]: base64 verejný kľúč }
+    storage.e2e.contacts ??= {} // { [userId]: { publicKey, enabled } }
     storage.e2e.keyPair ??= generateKeyPair()
 }
 
@@ -30,10 +29,15 @@ export function getDMRecipientId(channelId: string): string | null {
     return id ?? null
 }
 
-/** Je E2E aktívne pre tento konkrétny kanál (zapnuté globálne + je to 1:1 DM)? */
+/**
+ * Je E2E aktívne pre tento konkrétny kanál? Teraz sa to riadi len tým, či je
+ * daný kontakt (druhá osoba v DM) pridaný do zoznamu a má svoj vlastný
+ * prepínač zapnutý - žiadny globálny prepínač už neexistuje.
+ */
 export function isE2EActive(channelId: string): boolean {
-    if (!storage.e2e?.enabled) return false
-    return getDMRecipientId(channelId) !== null
+    const recipientId = getDMRecipientId(channelId)
+    if (!recipientId) return false
+    return storage.e2e?.contacts?.[recipientId]?.enabled === true
 }
 
 /** Zašifruje text pre daný kanál. Vráti null ak nemáme verejný kľúč príjemcu. */
@@ -41,7 +45,7 @@ export function encryptForChannel(channelId: string, plaintext: string): string 
     const recipientId = getDMRecipientId(channelId)
     if (!recipientId) return null
 
-    const recipientKey = storage.e2e.contacts?.[recipientId]
+    const recipientKey = storage.e2e.contacts?.[recipientId]?.publicKey
     if (!recipientKey) return null
 
     return encryptMessage(plaintext, recipientKey, storage.e2e.keyPair.secretKey)
@@ -57,7 +61,7 @@ export function decryptFromChannel(channelId: string, payload: string): string |
     const recipientId = getDMRecipientId(channelId)
     if (!recipientId) return null
 
-    const recipientKey = storage.e2e.contacts?.[recipientId]
+    const recipientKey = storage.e2e.contacts?.[recipientId]?.publicKey
     if (!recipientKey) return null
 
     return decryptMessage(payload, recipientKey, storage.e2e.keyPair.secretKey)
