@@ -1,1 +1,14 @@
-
+{
+    "name": "E2EDM",
+    "description": "Encrypts DM messages end-to-end so only you and the recipient can read them",
+    "authors": [
+        {
+            "name": "Yaminko",
+            "id": "666"
+        }
+    ],
+    "main": "src/index.ts",
+    "vendetta": {
+        "icon": "LockIcon"
+    }
+}
