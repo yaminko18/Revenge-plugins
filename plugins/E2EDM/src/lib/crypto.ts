@@ -80,6 +80,23 @@ export function keyPairFromSecretKey(secretKeyB64: string): KeyPair | null {
 }
 
 /**
+ * Overí, či daný base64 reťazec má správnu dĺžku na to, aby mohol byť platný
+ * Curve25519 verejný kľúč (32 bajtov). Nekontroluje kryptografickú platnosť
+ * bodu na krivke (to nie je pri X25519 potrebné/možné jednoducho overiť),
+ * len formát/dĺžku - ale to stačí na odchytenie preklepov, skopírovania
+ * súkromného kľúča namiesto verejného, useru vloženého náhodného textu a pod.
+ * ešte pred tým, než by to potichu zlyhalo až pri šifrovaní.
+ */
+export function isValidPublicKey(publicKeyB64: string): boolean {
+    if (!publicKeyB64) return false
+    try {
+        return base64ToBytes(publicKeyB64).length === nacl.box.publicKeyLength
+    } catch {
+        return false
+    }
+}
+
+/**
  * Zašifruje text pre daného príjemcu (Curve25519 + XSalsa20-Poly1305, cez nacl.box).
  * Vracia jeden base64 reťazec: nonce + ciphertext spojené za sebou (žiadny oddeľovač/značka),
  * alebo null pri chybe (zlý kľúč a pod.).
