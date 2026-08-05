@@ -6,7 +6,7 @@ import { semanticColors } from '@vendetta/ui'
 import { getAssetIDByName } from '@vendetta/ui/assets'
 import { showToast } from '@vendetta/ui/toasts'
 
-import { keyPairFromSecretKey } from './lib/crypto'
+import { isValidPublicKey, keyPairFromSecretKey } from './lib/crypto'
 import type { E2EContact } from './def'
 
 const { View, Text, ScrollView, TouchableOpacity, TextInput, Switch, Alert } = RN
@@ -53,6 +53,8 @@ function ContactCard({
     display: UserDisplay
 }) {
     const activeColor = contact.enabled ? COLORS.text : COLORS.muted
+    const keyIsValid = isValidPublicKey(contact.publicKey)
+    const keyIsEmpty = !contact.publicKey
 
     return (
         <View
@@ -79,8 +81,22 @@ function ContactCard({
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Switch
-                        value={contact.enabled}
-                        onValueChange={(v: boolean) => setContact(userId, { enabled: v })}
+                        value={contact.enabled && keyIsValid}
+                        onValueChange={(v: boolean) => {
+                            // Nedovolíme zapnúť E2E pre kontakt, ktorý nemá platný
+                            // (správnej dĺžky) verejný kľúč - inak by šifrovanie
+                            // ticho zlyhalo až pri odosielaní správy.
+                            if (v && !keyIsValid) {
+                                showToast(
+                                    keyIsEmpty
+                                        ? "E2E: enter this person's public key first"
+                                        : 'E2E: the entered public key has an invalid format/length',
+                                    getAssetIDByName('ic_warning_24px'),
+                                )
+                                return
+                            }
+                            setContact(userId, { enabled: v })
+                        }}
                         style={{ marginRight: 12 }}
                     />
                     <TouchableOpacity onPress={() => removeContact(userId)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -102,8 +118,15 @@ function ContactCard({
                     paddingHorizontal: 10,
                     paddingVertical: 8,
                     fontSize: 14,
+                    borderWidth: !keyIsEmpty && !keyIsValid ? 1 : 0,
+                    borderColor: COLORS.danger,
                 }}
             />
+            {!keyIsEmpty && !keyIsValid && (
+                <Text style={{ color: COLORS.danger, fontSize: 11, marginTop: 4 }}>
+                    Invalid public key - check the length/format (should be a 32-byte Curve25519 key, base64-encoded).
+                </Text>
+            )}
         </View>
     )
 }
