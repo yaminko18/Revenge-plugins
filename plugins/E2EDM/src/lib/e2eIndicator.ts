@@ -26,7 +26,7 @@ export default function patchE2EIndicator() {
             ...ret,
             tagText: '🟢',
             tagTextColor: undefined,
-            tagBackgroundColor: undefined,
+            tagBackgroundColor: 0x00000000, // priehľadné pozadie namiesto default modrého rámu
             tagVerified: false,
             tagType: undefined,
         }
