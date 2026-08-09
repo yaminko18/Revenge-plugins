@@ -1,6 +1,6 @@
 import { FluxDispatcher } from '@vendetta/metro/common'
 import { before } from '@vendetta/patcher'
-import { decryptFromChannel, isE2EActive } from './e2e'
+import { decryptFromChannel, isE2EActive, markDecrypted } from './e2e'
 
 // Mutates a message object's content in place, before it reaches the store/UI.
 // This only changes what is rendered locally on this device - it does not
@@ -16,10 +16,9 @@ function processMessage(msg: any) {
     const decrypted = decryptFromChannel(channelId, msg.content)
     if (decrypted !== null) {
         msg.content = decrypted
-        // Lokálny flag len pre tento klient (nič sa neposiela na sieť) -
-        // používa ho e2eIndicator.ts na zobrazenie 🟢 tagu vedľa mena len
-        // pri správach, kde sa dešifrovanie reálne podarilo.
-        msg.__e2eDecrypted = true
+        // Zaznamenaj do oddelenej evidencie (nie priamo na msg objekt - pozri
+        // komentár pri markDecrypted v e2e.ts, prečo).
+        if (msg.id) markDecrypted(channelId, msg.id)
     }
 }
 

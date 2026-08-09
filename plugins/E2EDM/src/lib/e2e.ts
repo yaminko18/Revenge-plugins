@@ -66,3 +66,33 @@ export function decryptFromChannel(channelId: string, payload: string): string |
 
     return decryptMessage(payload, recipientKey, storage.e2e.keyPair.secretKey)
 }
+
+/**
+ * Evidencia dešifrovaných správ, držaná MIMO samotného message objektu.
+ *
+ * Prečo: Discordov MessageStore si z prijatých event dát (`event.message`)
+ * vytvára vlastný interný MessageRecord objekt a pri tomto kopírovaní zoberie
+ * len polia, ktoré pozná (content, author, timestamp...) - akékoľvek vlastné
+ * pole, čo by sme pridali priamo na `msg` (napr. msg.__e2eDecrypted), sa touto
+ * transformáciou zahodí. Preto namiesto značenia priamo na správe vedieme
+ * vlastný, oddelený zoznam kľúčovaný `channelId:messageId` - ten prežije
+ * akékoľvek prekopírovanie správy, lebo naň vôbec nezávisí.
+ *
+ * Ukladá sa len ID (channelId:messageId), nikdy obsah správy. Žije len počas
+ * behu appky (nie je to perzistentné naprieč reštartom, na rozdiel od
+ * storage.e2e), a nikdy sa nečistí - pri bežnom používaní je to zanedbateľné
+ * množstvo pamäte (krátke stringy).
+ */
+const decryptedMessageIds = new Set<string>()
+
+function decryptedKey(channelId: string, messageId: string): string {
+    return `${channelId}:${messageId}`
+}
+
+export function markDecrypted(channelId: string, messageId: string) {
+    decryptedMessageIds.add(decryptedKey(channelId, messageId))
+}
+
+export function isMarkedDecrypted(channelId: string, messageId: string): boolean {
+    return decryptedMessageIds.has(decryptedKey(channelId, messageId))
+}
