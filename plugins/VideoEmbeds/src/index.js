@@ -202,14 +202,14 @@ export default (function () {
         `https://www.facebook.com/video.php?v=${id}`,
         `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent("https://www.facebook.com/watch/?v=" + id)}&show_text=false`,
       ].filter((u) => u !== first);
-      for (const u of alts) {
-        try {
+      const o = await firstOk(
+        alts.map(async (u) => {
           const h = await (await fetch(u, { headers: HDRS })).text();
-          const o = parseFB(h);
-          if (o) return o;
-          loginWall = loginWall || LOGIN_RE.test(h);
-        } catch (e) { logger.log("FB alt zlyhal", e); }
-      }
+          if (LOGIN_RE.test(h)) loginWall = true;
+          return parseFB(h);
+        })
+      );
+      if (o) return o;
     }
     throw new Error(loginWall ? "FB: vyžaduje login" : "FB: žiadne mp4 ani DASH");
   }
@@ -287,6 +287,78 @@ export default (function () {
     return hit;
   }
 
+  // ---------------------------------------------------------------- rozmery z mp4
+  const firstOk = (ps) =>
+    new Promise((res) => {
+      let n = ps.length;
+      if (!n) return res(null);
+      ps.forEach((p) =>
+        p.then(
+          (v) => { if (v) res(v); else if (--n === 0) res(null); },
+          () => { if (--n === 0) res(null); }
+        )
+      );
+    });
+
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function b64ToBytes(b64) {
+    const lut = new Int16Array(128).fill(-1);
+    for (let i = 0; i < 64; i++) lut[B64.charCodeAt(i)] = i;
+    const out = new Uint8Array(Math.floor((b64.length * 3) / 4));
+    let o = 0, buf = 0, bits = 0;
+    for (let i = 0; i < b64.length; i++) {
+      const v = lut[b64.charCodeAt(i)];
+      if (v < 0) continue;
+      buf = (buf << 6) | v; bits += 6;
+      if (bits >= 8) { bits -= 8; out[o++] = (buf >> bits) & 255; }
+    }
+    return out.subarray(0, o);
+  }
+
+  // Prečíta šírku/výšku video stopy z `tkhd` boxu (moov musí byť na začiatku súboru)
+  function mp4Dims(b) {
+    const u32 = (p) => ((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) >>> 0;
+    const i32 = (p) => (u32(p) | 0);
+    for (let i = 4; i + 100 < b.length; i++) {
+      if (b[i] === 0x74 && b[i + 1] === 0x6b && b[i + 2] === 0x68 && b[i + 3] === 0x64) { // "tkhd"
+        const v = i + 4;                       // začiatok version/flags
+        const ver = b[v];
+        const m = v + (ver === 1 ? 52 : 40);   // matica
+        const wp = v + (ver === 1 ? 88 : 76);  // šírka (16.16)
+        let w = u32(wp) >>> 16, h = u32(wp + 4) >>> 16;
+        if (!w || !h) continue;                // audio stopa
+        if (i32(m) === 0 && i32(m + 4) !== 0) [w, h] = [h, w]; // otočenie o 90/270°
+        return { w, h };
+      }
+    }
+    return null;
+  }
+
+  async function probeDims(url) {
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = setTimeout(() => ctrl?.abort(), 3000);
+    try {
+      const r = await fetch(url, {
+        headers: { "User-Agent": UA_DESKTOP, Range: "bytes=0-262143" },
+        signal: ctrl?.signal,
+      });
+      if (r.status !== 206) { ctrl?.abort(); return null; } // server Range ignoruje -> nesťahuj celé video
+      const blob = await r.blob();
+      const b64 = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(String(fr.result).split(",")[1] || "");
+        fr.onerror = rej;
+        fr.readAsDataURL(blob);
+      });
+      return mp4Dims(b64ToBytes(b64));
+    } catch (e) {
+      logger.log("probe zlyhal", e);
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // ---- spoločné: cache (úspech 20 min, neúspech len 45 s) + jeden opakovaný pokus
   function resolve(link, kind) {
     const hit = cache.get(link);
@@ -295,10 +367,19 @@ export default (function () {
 
     const run = () => (kind === "fb" ? resolveFB(link) : resolveIG(link));
     const p = run()
-      .catch(() => new Promise((res) => setTimeout(res, 1500)).then(run))
-      .then((d) => {
+      .catch(() => new Promise((res) => setTimeout(res, 800)).then(run))
+      .then(async (d) => {
+        // IG: rozmery vždy over z hlavičky videa; FB len keď chýbajú
+        let src = d.w && d.h ? "stránka" : "žiadne";
+        if (kind === "ig" || !(d.w && d.h)) {
+          const pr = await probeDims(d.url);
+          if (pr) { d = { ...d, w: pr.w, h: pr.h }; src = "hlavička"; }
+        }
         cache.set(link, { exp: Date.now() + TTL, data: d });
-        toast(d.note ? "Video Embeds: " + d.note : "Video Embeds: nájdené ✓" + (d.w && d.h ? ` ${d.w}×${d.h}` : " (bez rozmerov)"));
+        toast(
+          d.note ? "Video Embeds: " + d.note
+          : "Video Embeds: nájdené ✓" + (d.w && d.h ? ` ${d.w}×${d.h} (${src})` : " (bez rozmerov)")
+        );
         return d;
       })
       .catch((e) => {
