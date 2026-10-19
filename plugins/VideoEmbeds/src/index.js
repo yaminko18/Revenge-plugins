@@ -34,6 +34,9 @@ function detect(content) {
 }
 
 // upraví správu v payloade; vráti true ak niečo zmenila
+// Diagnostika: Revenge -> Nastavenia -> Developer -> Debug logs, hľadaj "rvp:"
+const dbg = (...a) => logger.log("rvp:", ...a);
+
 function process(msg) {
   if (msg && msg.id && Array.isArray(msg.attachments) && msg.attachments.some(isMine)) {
     // náš prehrávač smie byť len na správe s vlastným ID a (ak poznáme obsah) s vlastným odkazom
@@ -49,14 +52,16 @@ function process(msg) {
 
   const hit = cache.get(found.link);
   if (hit && Date.now() < hit.exp) {
+    dbg("cache", found.kind, msg.id, hit.data ? "ok" : "ZLYHALO (neg. cache)");
     if (hit.data) msg.attachments = [...(msg.attachments ?? []), makeAtt(msg.id, hit.data)];
     return;
   }
+  dbg("hladam", found.kind, msg.id);
 
   const base = msg.attachments ?? [];
   const channel_id = msg.channel_id;
   resolve(found.link, found.kind).then((d) => {
-    if (!d || !channel_id) return;
+    if (!d || !channel_id) { dbg("nenaslo", found.kind, msg.id); return; }
     deliver(msg.id, channel_id, base, d, found.link);
   });
 }
@@ -89,6 +94,7 @@ async function deliver(id, channel_id, base, d) {
       // správa už nemá videolink (upravená / iná správa) -> nič nepridávaj
       if (typeof cur.content !== "string" || !detect(cur.content)) return;
     }
+    dbg("update", id, wait ? "pokus po " + wait + "ms" : "pokus 1");
     const curAtts = canVerify ? Array.from(MessageStore.getMessage(channel_id, id)?.attachments ?? base) : base;
     FluxDispatcher.dispatch({
       type: "MESSAGE_UPDATE",
@@ -96,6 +102,7 @@ async function deliver(id, channel_id, base, d) {
     });
     if (!canVerify) return;      // nemáme ako overiť, stačí jeden pokus
   }
+  dbg("vzdal som to (správa nie je v store alebo sa príloha neuložila)", id);
 }
 
 // Správy, ktoré sú už v MessageStore (načítané pred štartom pluginu alebo z cache), neprejdú
@@ -160,6 +167,14 @@ export default {
           case "LOAD_MESSAGES_SUCCESS":
           case "LOAD_MESSAGES_SUCCESS_CACHED":
             ev.messages?.forEach(process);
+            // poistka: čo dispatch patch nestihol/nezachytil, doplní scan store (scroll hore)
+            {
+              const cid = ev.channelId ?? SelectedChannelStore?.getChannelId?.();
+              if (cid) {
+                setTimeout(() => scanChannel(cid), 1200);
+                setTimeout(() => scanChannel(cid), 5000);
+              }
+            }
             break;
           case "CHANNEL_SELECT":
             // návrat do kanála: správy sú v store a nič sa nedispatchuje
