@@ -4,7 +4,6 @@ export default (function () {
     metro.common?.FluxDispatcher ?? metro.findByProps("dispatch", "subscribe");
 
   // ---------------------------------------------------------------- config
-  const DIRECT_RE = /https?:\/\/[^\s<>"]+?\.(?:mp4|webm|mov|m4v)(?:\?[^\s<>"]*)?/i;
   const FB_RE = /https?:\/\/(?:[\w-]+\.)?(?:facebook\.com\/(?:reel\/\d+|watch[^\s<>"]*|video\.php[^\s<>"]*|share\/(?:v|r)\/[\w-]+|[^\s\/]+\/videos\/[^\s<>"]+)|fb\.watch\/[\w-]+)[^\s<>"]*/i;
   const IG_RE = /https?:\/\/(?:www\.)?instagram\.com\/(?:[^\s\/?#]+\/)?(?:p|reels?|tv)\/[\w-]+[^\s<>"]*|https?:\/\/(?:www\.)?instagram\.com\/share\/[^\s<>"]+/i;
 
@@ -236,7 +235,6 @@ export default (function () {
 
   function detect(content) {
     let m;
-    if ((m = content.match(DIRECT_RE))) return { link: m[0], kind: "direct" };
     if ((m = content.match(FB_RE))) return { link: m[0], kind: "fb" };
     if ((m = content.match(IG_RE))) return { link: m[0], kind: "ig" };
     return null;
@@ -248,11 +246,6 @@ export default (function () {
     if (hasVideo(msg)) return;
     const found = detect(msg.content);
     if (!found) return;
-
-    if (found.kind === "direct") {
-      msg.attachments = [...(msg.attachments ?? []), makeAtt(msg.id, { url: found.link })];
-      return;
-    }
 
     const hit = cache.get(found.link);
     if (hit && Date.now() - hit.t < TTL) {
