@@ -1,1 +1,8 @@
+{
+  "name": "Video Embeds",
+  "description": "Zobrazí natívny video prehrávač pre priame odkazy na video (.mp4/.webm/.mov) a pre Facebook / Instagram videá.",
+  "authors": [{ "name": "Yaminko", "id": "666" }],
+	"main": "./src/index.js",
+  "vendetta": { "icon": "ic_video" }
+}
 
