@@ -1,4 +1,4 @@
-(function () {
+export default (function () {
   const { patcher, metro, logger } = vendetta;
   const FluxDispatcher =
     metro.common?.FluxDispatcher ?? metro.findByProps("dispatch", "subscribe");
@@ -12,6 +12,12 @@
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
   const TTL = 20 * 60 * 1000; // podpísané URL expirujú, necachuj dlho
   const MARK = "rvp-";
+  const DEBUG = true; // po odladení daj false
+
+  const toast = (msg) => {
+    if (!DEBUG) return;
+    try { vendetta.ui.toasts.showToast(String(msg)); } catch (e) { logger.log(msg); }
+  };
 
   // ---------------------------------------------------------------- helpers
   const cache = new Map();   // link -> { t, data }  (data = null pri zlyhaní)
@@ -171,8 +177,8 @@
     if (pending.has(link)) return pending.get(link);
 
     const p = (kind === "fb" ? resolveFB(link) : resolveIG(link))
-      .then((d) => { cache.set(link, { t: Date.now(), data: d }); return d; })
-      .catch((e) => { logger.log("resolve:", e?.message ?? e); cache.set(link, { t: Date.now(), data: null }); return null; })
+      .then((d) => { cache.set(link, { t: Date.now(), data: d }); toast("Video Embeds: nájdené ✓"); return d; })
+      .catch((e) => { logger.log("resolve:", e?.message ?? e); toast("Video Embeds: " + (e?.message ?? e)); cache.set(link, { t: Date.now(), data: null }); return null; })
       .finally(() => pending.delete(link));
     pending.set(link, p);
     return p;
@@ -236,6 +242,7 @@
   let unpatch;
   return {
     onLoad() {
+      toast("Video Embeds načítaný");
       unpatch = patcher.before("dispatch", FluxDispatcher, (args) => {
         const ev = args[0];
         if (!ev) return;
