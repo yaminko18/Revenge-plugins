@@ -12,12 +12,7 @@ export default (function () {
   const TTL = 20 * 60 * 1000; // podpísané URL expirujú, necachuj dlho
   const NEG_TTL = 45 * 1000;  // neúspech zapamätaj len krátko, nech sa dá skúsiť znova
   const MARK = "rvp-";
-  const DEBUG = true; // po odladení daj false
 
-  const toast = (msg) => {
-    if (!DEBUG) return;
-    try { vendetta.ui.toasts.showToast(String(msg)); } catch (e) { logger.log(msg); }
-  };
 
   // ---------------------------------------------------------------- helpers
   const cache = new Map();   // link -> { exp, data }  (data = null pri zlyhaní)
@@ -370,21 +365,15 @@ export default (function () {
       .catch(() => new Promise((res) => setTimeout(res, 800)).then(run))
       .then(async (d) => {
         // IG: rozmery vždy over z hlavičky videa; FB len keď chýbajú
-        let src = d.w && d.h ? "stránka" : "žiadne";
         if (kind === "ig" || !(d.w && d.h)) {
           const pr = await probeDims(d.url);
-          if (pr) { d = { ...d, w: pr.w, h: pr.h }; src = "hlavička"; }
+          if (pr) d = { ...d, w: pr.w, h: pr.h };
         }
         cache.set(link, { exp: Date.now() + TTL, data: d });
-        toast(
-          d.note ? "Video Embeds: " + d.note
-          : "Video Embeds: nájdené ✓" + (d.w && d.h ? ` ${d.w}×${d.h} (${src})` : " (bez rozmerov)")
-        );
         return d;
       })
       .catch((e) => {
         logger.log("resolve:", e?.message ?? e);
-        toast("Video Embeds: " + (e?.message ?? e));
         cache.set(link, { exp: Date.now() + NEG_TTL, data: null });
         return null;
       })
@@ -434,18 +423,63 @@ export default (function () {
     const channel_id = msg.channel_id;
     resolve(found.link, found.kind).then((d) => {
       if (!d || !channel_id) return;
+      deliver(msg.id, channel_id, base, d);
+    });
+  }
+
+  // Pošle MESSAGE_UPDATE a skontroluje v MessageStore, či sa attachment naozaj uložil.
+  // Pri štarte appky môže Discord update zahodiť (kanál sa ešte načítava), tak to zopakujeme.
+  const MessageStore = (() => {
+    try { return metro.findByStoreName("MessageStore"); } catch { return null; }
+  })();
+
+  async function deliver(id, channel_id, base, d) {
+    const delays = [0, 600, 1500, 4000, 9000];
+    for (const wait of delays) {
+      if (wait) await new Promise((r) => setTimeout(r, wait));
+      if (!active) return;
+      const cur = MessageStore?.getMessage?.(channel_id, id);
+      if (cur && (cur.attachments ?? []).some((a) => String(a.id).startsWith(MARK))) return;
       FluxDispatcher.dispatch({
         type: "MESSAGE_UPDATE",
-        message: { id: msg.id, channel_id, attachments: [...base, makeAtt(msg.id, d)] },
+        message: { id, channel_id, attachments: [...base, makeAtt(id, d)] },
       });
-    });
+      if (!MessageStore?.getMessage) return; // nemáme ako overiť, stačí jeden pokus
+    }
+  }
+
+  // Správy, ktoré sú už v MessageStore (načítané pred štartom pluginu alebo z cache), neprejdú
+  // cez dispatch patch – prejdeme ich sami pri otvorení kanála a po štarte.
+  const SelectedChannelStore = (() => {
+    try { return metro.findByStoreName("SelectedChannelStore"); } catch { return null; }
+  })();
+
+  function scanChannel(channelId) {
+    if (!active || !channelId || !MessageStore?.getMessages) return;
+    try {
+      const col = MessageStore.getMessages(channelId);
+      const arr = col?._array ?? col?.toArray?.() ?? [];
+      for (const m of arr) {
+        if (!m || typeof m.content !== "string" || !m.content || !m.id) continue;
+        if (hasVideo({ attachments: Array.from(m.attachments ?? []) })) continue;
+        const found = detect(m.content);
+        if (!found) continue;
+        const base = Array.from(m.attachments ?? []);
+        const cid = m.channel_id ?? channelId;
+        resolve(found.link, found.kind).then((d) => { if (d) deliver(m.id, cid, base, d); });
+      }
+    } catch (e) { logger.log("scan error", e); }
   }
 
   // ---------------------------------------------------------------- patch
   let unpatch;
+  let active = false;
   return {
     onLoad() {
-      toast("Video Embeds načítaný");
+      active = true;
+      // po štarte: prejdi aktuálny kanál niekoľkokrát (store sa môže plniť postupne)
+      for (const t of [500, 2500, 6000, 12000])
+        setTimeout(() => scanChannel(SelectedChannelStore?.getChannelId?.()), t);
       unpatch = patcher.before("dispatch", FluxDispatcher, (args) => {
         const ev = args[0];
         if (!ev) return;
@@ -456,13 +490,20 @@ export default (function () {
               process(ev.message);
               break;
             case "LOAD_MESSAGES_SUCCESS":
+            case "LOAD_MESSAGES_SUCCESS_CACHED":
               ev.messages?.forEach(process);
+              break;
+            case "CHANNEL_SELECT":
+              // návrat do kanála: správy sú v store a nič sa nedispatchuje
+              setTimeout(() => scanChannel(ev.channelId), 300);
+              setTimeout(() => scanChannel(ev.channelId), 2000);
               break;
           }
         } catch (e) { logger.log("patch error", e); }
       });
     },
     onUnload() {
+      active = false;
       unpatch?.();
       cache.clear();
       pending.clear();
