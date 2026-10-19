@@ -10,6 +10,7 @@ export default (function () {
   const UA_DESKTOP =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
   const TTL = 20 * 60 * 1000; // podpísané URL expirujú, necachuj dlho
+  const NEG_TTL = 45 * 1000;  // neúspech zapamätaj len krátko, nech sa dá skúsiť znova
   const MARK = "rvp-";
   const DEBUG = true; // po odladení daj false
 
@@ -19,7 +20,7 @@ export default (function () {
   };
 
   // ---------------------------------------------------------------- helpers
-  const cache = new Map();   // link -> { t, data }  (data = null pri zlyhaní)
+  const cache = new Map();   // link -> { exp, data }  (data = null pri zlyhaní)
   const pending = new Map(); // link -> Promise
 
   const unesc = (s) => {
@@ -67,51 +68,56 @@ export default (function () {
   }
 
   // ---------------------------------------------------------------- resolvers
-  // yt-dlp: reel -> watch/?v=ID&_rdr, m.facebook.com -> www.facebook.com
-  function normFB(url) {
-    const reel = url.match(/facebook\.com\/reel\/(\d+)/);
-    if (reel) return `https://www.facebook.com/watch/?v=${reel[1]}&_rdr`;
-    return url.replace("://m.facebook.com/", "://www.facebook.com/");
+  const HDRS = {
+    "User-Agent": UA_DESKTOP,
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
+  const LOGIN_RE = /id="login_form"|id="loginbutton"|You must log in to continue/;
+
+  // Rozmery najbližšie k danému miestu v texte (aby sme nechytili rozmery iného objektu)
+  function nearDims(text, idx) {
+    if (idx < 0) return null;
+    const from = Math.max(0, idx - 4000);
+    const win = text.slice(from, idx + 4000);
+    const pass = (patterns) => {
+      let best = null;
+      for (const [re, wi, hi] of patterns) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(win))) {
+          const w = +m[wi], h = +m[hi];
+          if (w < 100 || h < 100) continue;
+          const dist = Math.abs(from + m.index - idx);
+          if (!best || dist < best.dist) best = { w, h, dist };
+        }
+      }
+      return best;
+    };
+    return (
+      pass([
+        [/"original_width":(\d+),"original_height":(\d+)/g, 1, 2],
+        [/"original_height":(\d+),"original_width":(\d+)/g, 2, 1],
+      ]) ||
+      pass([
+        [/"width":(\d+),"height":(\d+)/g, 1, 2],
+        [/"height":(\d+),"width":(\d+)/g, 2, 1],
+      ])
+    );
   }
 
-  async function resolveFB(url) {
-    const html = await (await fetch(normFB(url), {
-      headers: { "User-Agent": UA_DESKTOP, "Accept-Language": "en-US,en;q=0.9" },
-    })).text();
+  // ---- Facebook
+  const fbId = (u) =>
+    u.match(/facebook\.com\/reel\/(\d+)/)?.[1] ||
+    u.match(/[?&]v=(\d+)/)?.[1] ||
+    u.match(/\/videos\/(?:[^\/?#]+\/)?(\d+)/)?.[1] ||
+    null;
 
-    const str = (key) => {
-      const m = html.match(new RegExp('"' + key + '":"([^"]+)"'));
-      return m ? unesc(m[1]) : null;
-    };
-
-    // nový formát: videoDeliveryResponseResult.progressive_urls[{progressive_url, metadata.quality}]
-    const prog = jsonAfter(html, "progressive_urls");
-    const progBy = (q) =>
-      Array.isArray(prog)
-        ? prog.find((p) => String(p?.metadata?.quality).toUpperCase() === q)?.progressive_url ?? null
-        : null;
-
-    const src =
-      progBy("HD") ||
-      str("browser_native_hd_url") ||
-      str("playable_url_quality_hd") ||
-      progBy("SD") ||
-      str("browser_native_sd_url") ||
-      str("playable_url") ||
-      str("hd_src_no_ratelimit") || str("hd_src") ||
-      str("sd_src_no_ratelimit") || str("sd_src");
-
-    const dim = html.match(/"width":(\d{3,4}),"height":(\d{3,4})/);
-
-    if (!src) {
-      // Záloha: DASH manifest -> najlepší video-only mp4 (bez zvuku, ale prehrá sa)
-      const dash = dashVideoOnly(html);
-      if (dash) return { ...dash, note: "FB: len DASH, video bez zvuku" };
-      if (/id="login_form"|id="loginbutton"|You must log in to continue/.test(html))
-        throw new Error("FB: vyžaduje login");
-      throw new Error("FB: žiadne mp4 ani DASH v stránke");
-    }
-    return { url: src, w: dim ? +dim[1] : 0, h: dim ? +dim[2] : 0 };
+  // yt-dlp: reel -> watch/?v=ID&_rdr, m.facebook.com -> www.facebook.com
+  function normFB(url) {
+    const id = url.match(/facebook\.com\/reel\/(\d+)/)?.[1];
+    if (id) return `https://www.facebook.com/watch/?v=${id}&_rdr`;
+    return url.replace("://m.facebook.com/", "://www.facebook.com/");
   }
 
   function dashVideoOnly(html) {
@@ -143,6 +149,72 @@ export default (function () {
     return best ? { url: best.url, w: best.w, h: best.h } : null;
   }
 
+  // vráti { url, w, h, note? } alebo null
+  function parseFB(html) {
+    let srcIdx = -1;
+    const str = (key) => {
+      const m = html.match(new RegExp('"' + key + '":"([^"]+)"'));
+      if (!m) return null;
+      srcIdx = m.index;
+      return unesc(m[1]);
+    };
+    const prog = jsonAfter(html, "progressive_urls");
+    const progBy = (q) => {
+      const u = Array.isArray(prog)
+        ? prog.find((p) => String(p?.metadata?.quality).toUpperCase() === q)?.progressive_url ?? null
+        : null;
+      if (u) srcIdx = html.indexOf('"progressive_urls"');
+      return u;
+    };
+
+    const src =
+      progBy("HD") ||
+      str("browser_native_hd_url") ||
+      str("playable_url_quality_hd") ||
+      progBy("SD") ||
+      str("browser_native_sd_url") ||
+      str("playable_url") ||
+      str("hd_src_no_ratelimit") || str("hd_src") ||
+      str("sd_src_no_ratelimit") || str("sd_src");
+
+    if (src) {
+      const d = nearDims(html, srcIdx);
+      return { url: src, w: d?.w || 0, h: d?.h || 0 };
+    }
+    const dash = dashVideoOnly(html);
+    return dash ? { ...dash, note: "FB: len DASH, video bez zvuku" } : null;
+  }
+
+  async function resolveFB(url) {
+    const first = normFB(url);
+    const r = await fetch(first, { headers: HDRS });
+    const final = r.url || first;
+    const html = await r.text();
+    const out = parseFB(html);
+    if (out) return out;
+    let loginWall = LOGIN_RE.test(html);
+
+    // iné varianty tej istej stránky – FB niekedy pri jednej z nich neposkytne dáta
+    const id = fbId(final) || fbId(url);
+    if (id) {
+      const alts = [
+        `https://www.facebook.com/watch/?v=${id}`,
+        `https://www.facebook.com/video.php?v=${id}`,
+        `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent("https://www.facebook.com/watch/?v=" + id)}&show_text=false`,
+      ].filter((u) => u !== first);
+      for (const u of alts) {
+        try {
+          const h = await (await fetch(u, { headers: HDRS })).text();
+          const o = parseFB(h);
+          if (o) return o;
+          loginWall = loginWall || LOGIN_RE.test(h);
+        } catch (e) { logger.log("FB alt zlyhal", e); }
+      }
+    }
+    throw new Error(loginWall ? "FB: vyžaduje login" : "FB: žiadne mp4 ani DASH");
+  }
+
+  // ---- Instagram
   const isLoginRedirect = (u) => {
     try { const p = new URL(u).pathname; return p.startsWith("/accounts/login") || p === "/"; }
     catch { return false; }
@@ -151,40 +223,51 @@ export default (function () {
   async function resolveIG(url) {
     let u = url;
     if (/instagram\.com\/share\//.test(u)) {           // share linky presmerujú na pravý post
-      const r = await fetch(u, { headers: { "User-Agent": UA_DESKTOP } });
+      const r = await fetch(u, { headers: HDRS });
       u = r.url || u;
     }
     if (/\/reels?\/audio\//.test(u)) throw new Error("IG: audio stránka");
     const code = u.match(/instagram\.com\/(?:[^\/?#]+\/)?(?:p|tv|reels?)\/([^\/?#&]+)/)?.[1];
     if (!code) throw new Error("IG: neplatný link");
 
-    const fromVersions = (vs) => {
+    const fromVersions = (vs, fallback) => {
       if (!Array.isArray(vs)) return null;
       const best = vs.filter((v) => v?.url).sort((a, b) => (b.height || 0) - (a.height || 0))[0];
-      return best ? { url: best.url, w: best.width || 0, h: best.height || 0 } : null;
+      if (!best) return null;
+      return { url: best.url, w: best.width || fallback?.w || 0, h: best.height || fallback?.h || 0 };
     };
 
-    // 1) hlavná stránka postu – to isté, čo yt-dlp robí ako fallback (data-sjs / xig_polaris_media)
+    // 1) hlavná stránka postu (to isté, čo yt-dlp robí ako fallback)
     try {
-      const r = await fetch(`https://www.instagram.com/p/${code}`, { headers: { "User-Agent": UA_DESKTOP } });
+      const r = await fetch(`https://www.instagram.com/p/${code}`, { headers: HDRS });
       if (!isLoginRedirect(r.url)) {
-        const hit = fromVersions(jsonAfter(await r.text(), "video_versions"));
+        const html = await r.text();
+        const od = html.match(/"original_width":(\d+),"original_height":(\d+)/);
+        const hit = fromVersions(jsonAfter(html, "video_versions"), od && { w: +od[1], h: +od[2] });
         if (hit) return hit;
       }
     } catch (e) { logger.log("IG page zlyhal", e); }
 
     // 2) embed stránka (yt-dlp ju už nepoužíva; môže, ale nemusí fungovať)
-    try {
-      const html = await (await fetch(
-        `https://www.instagram.com/p/${code}/embed/captioned/`,
-        { headers: { "User-Agent": UA_DESKTOP } }
-      )).text();
-      const m = html.match(/video_url\\*":\\*"(https:[^"]*)"/);
-      if (m) {
+    for (const path of ["embed/captioned/", "embed/"]) {
+      try {
+        const html = await (await fetch(`https://www.instagram.com/p/${code}/${path}`, { headers: HDRS })).text();
+        const m = html.match(/video_url\\*":\\*"(https:[^"]*)"/);
+        if (!m) continue;
         const v = m[1].replace(/\\+$/, "").replace(/\\+u0026/g, "&").replace(/\\+\//g, "/");
-        return { url: v, w: 0, h: 0 };
-      }
-    } catch (e) { logger.log("IG embed zlyhal", e); }
+        const dm =
+          html.match(/dimensions\\*":\{\\*"height\\*":(\d+),\\*"width\\*":(\d+)/) ||
+          html.match(/dimensions\\*":\{\\*"width\\*":(\d+),\\*"height\\*":(\d+)/);
+        let w = 0, h = 0;
+        if (dm) {
+          const [a, b] = [+dm[1], +dm[2]];
+          const heightFirst = /dimensions\\*":\{\\*"height/.test(dm[0]);
+          h = heightFirst ? a : b;
+          w = heightFirst ? b : a;
+        }
+        return { url: v, w, h };
+      } catch (e) { logger.log("IG embed zlyhal", e); }
+    }
 
     // 3) web API (yt-dlp ho používa len s prihlásením – bez sessionid vráti login)
     const r = await fetch(`https://www.instagram.com/api/v1/media/${shortcodeToId(code)}/info/`, {
@@ -198,19 +281,32 @@ export default (function () {
       },
     });
     if (!r.ok) throw new Error("IG: vyžaduje login (" + r.status + ")");
-    const hit = fromVersions((await r.json()).items?.[0]?.video_versions);
+    const item = (await r.json()).items?.[0];
+    const hit = fromVersions(item?.video_versions, item && { w: item.original_width, h: item.original_height });
     if (!hit) throw new Error("IG: žiadne video");
     return hit;
   }
 
+  // ---- spoločné: cache (úspech 20 min, neúspech len 45 s) + jeden opakovaný pokus
   function resolve(link, kind) {
     const hit = cache.get(link);
-    if (hit && Date.now() - hit.t < TTL) return Promise.resolve(hit.data);
+    if (hit && Date.now() < hit.exp) return Promise.resolve(hit.data);
     if (pending.has(link)) return pending.get(link);
 
-    const p = (kind === "fb" ? resolveFB(link) : resolveIG(link))
-      .then((d) => { cache.set(link, { t: Date.now(), data: d }); toast(d.note ? "Video Embeds: " + d.note : "Video Embeds: nájdené ✓"); return d; })
-      .catch((e) => { logger.log("resolve:", e?.message ?? e); toast("Video Embeds: " + (e?.message ?? e)); cache.set(link, { t: Date.now(), data: null }); return null; })
+    const run = () => (kind === "fb" ? resolveFB(link) : resolveIG(link));
+    const p = run()
+      .catch(() => new Promise((res) => setTimeout(res, 1500)).then(run))
+      .then((d) => {
+        cache.set(link, { exp: Date.now() + TTL, data: d });
+        toast(d.note ? "Video Embeds: " + d.note : "Video Embeds: nájdené ✓" + (d.w && d.h ? ` ${d.w}×${d.h}` : " (bez rozmerov)"));
+        return d;
+      })
+      .catch((e) => {
+        logger.log("resolve:", e?.message ?? e);
+        toast("Video Embeds: " + (e?.message ?? e));
+        cache.set(link, { exp: Date.now() + NEG_TTL, data: null });
+        return null;
+      })
       .finally(() => pending.delete(link));
     pending.set(link, p);
     return p;
@@ -248,7 +344,7 @@ export default (function () {
     if (!found) return;
 
     const hit = cache.get(found.link);
-    if (hit && Date.now() - hit.t < TTL) {
+    if (hit && Date.now() < hit.exp) {
       if (hit.data) msg.attachments = [...(msg.attachments ?? []), makeAtt(msg.id, hit.data)];
       return;
     }
