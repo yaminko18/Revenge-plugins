@@ -11,4 +11,6 @@
   https://yaminko18.github.io/Revenge-plugins/OverrideUserAvatars/
 <li>E2EDM</li>
   https://yaminko18.github.io/Revenge-plugins/E2EDM/
+  <li>VideoEmbeds</li>
+  https://yaminko18.github.io/Revenge-plugins/VideoEmbeds/
 </ul>
