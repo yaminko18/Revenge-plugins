@@ -102,13 +102,46 @@ export default (function () {
       str("hd_src_no_ratelimit") || str("hd_src") ||
       str("sd_src_no_ratelimit") || str("sd_src");
 
+    const dim = html.match(/"width":(\d{3,4}),"height":(\d{3,4})/);
+
     if (!src) {
+      // Záloha: DASH manifest -> najlepší video-only mp4 (bez zvuku, ale prehrá sa)
+      const dash = dashVideoOnly(html);
+      if (dash) return { ...dash, note: "FB: len DASH, video bez zvuku" };
       if (/id="login_form"|id="loginbutton"|You must log in to continue/.test(html))
         throw new Error("FB: vyžaduje login");
-      throw new Error("FB: video nenájdené (možno len DASH)");
+      throw new Error("FB: žiadne mp4 ani DASH v stránke");
     }
-    const dim = html.match(/"width":(\d{3,4}),"height":(\d{3,4})/);
     return { url: src, w: dim ? +dim[1] : 0, h: dim ? +dim[2] : 0 };
+  }
+
+  function dashVideoOnly(html) {
+    const decode = (x) => x.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
+    const re = /"(?:manifest_xml|dash_manifest)":"((?:[^"\\]|\\.)*)"/g;
+    let best = null, m;
+    while ((m = re.exec(html))) {
+      let xml;
+      try { xml = JSON.parse('"' + m[1] + '"'); } catch { continue; }
+      const sets = xml.match(/<AdaptationSet[\s\S]*?<\/AdaptationSet>/g) || [];
+      for (const set of sets) {
+        const head = set.match(/<AdaptationSet([^>]*)>/)?.[1] ?? "";
+        const reps = set.match(/<Representation[\s\S]*?<\/Representation>/g) || [];
+        for (const rep of reps) {
+          const attrs = rep.match(/<Representation([^>]*)>/)?.[1] ?? "";
+          const isVideo = /contentType="video"/.test(head) || /mimeType="video\//.test(head + attrs);
+          const base = rep.match(/<BaseURL>([^<]+)<\/BaseURL>/)?.[1];
+          if (!isVideo || !base) continue;
+          const bw = +(attrs.match(/bandwidth="(\d+)"/)?.[1] ?? 0);
+          const cand = {
+            url: decode(base), bw,
+            w: +(attrs.match(/\swidth="(\d+)"/)?.[1] ?? 0),
+            h: +(attrs.match(/\sheight="(\d+)"/)?.[1] ?? 0),
+          };
+          if (!best || cand.bw > best.bw) best = cand;
+        }
+      }
+    }
+    return best ? { url: best.url, w: best.w, h: best.h } : null;
   }
 
   const isLoginRedirect = (u) => {
@@ -177,7 +210,7 @@ export default (function () {
     if (pending.has(link)) return pending.get(link);
 
     const p = (kind === "fb" ? resolveFB(link) : resolveIG(link))
-      .then((d) => { cache.set(link, { t: Date.now(), data: d }); toast("Video Embeds: nájdené ✓"); return d; })
+      .then((d) => { cache.set(link, { t: Date.now(), data: d }); toast(d.note ? "Video Embeds: " + d.note : "Video Embeds: nájdené ✓"); return d; })
       .catch((e) => { logger.log("resolve:", e?.message ?? e); toast("Video Embeds: " + (e?.message ?? e)); cache.set(link, { t: Date.now(), data: null }); return null; })
       .finally(() => pending.delete(link));
     pending.set(link, p);
