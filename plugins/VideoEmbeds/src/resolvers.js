@@ -50,6 +50,36 @@ const fbId = (u) =>
   u.match(/\/videos\/(?:[^\/?#]+\/)?(\d+)/)?.[1] ||
   null;
 
+const decEnt = (x) => String(x).replace(/&amp;/g, "&").replace(/&#0*38;/g, "&").replace(/&quot;/g, '"');
+
+// Zo stránky (napr. share/r/XYZ, kde sa presmerovanie nezachytilo) vytiahne ID videa.
+// yt-dlp: generický extraktor nasleduje presmerovanie na facebook.com/reel/<ID> a ďalej pracuje s tým ID.
+function fbIdsFromHtml(html) {
+  const out = [];   // { src, id } – v poradí dôveryhodnosti
+  const seen = new Set();
+  const add = (src, id) => { if (id && !seen.has(id)) { seen.add(id); out.push({ src, id }); } };
+  const first = (res) => { for (const re of res) { const m = html.match(re); if (m) return decEnt(m[1]); } return null; };
+
+  const og = first([/<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i,
+                    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:url["']/i]);
+  const canon = first([/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i,
+                       /<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/i]);
+  const refresh = first([/http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"']+)["']/i]);
+  const jsr = first([/location\.(?:replace|assign)\(\s*["']([^"']+)["']/, /location\.href\s*=\s*["']([^"']+)["']/]);
+  for (const [src, u] of [["og:url", og], ["canonical", canon], ["meta refresh", refresh], ["JS presmerovanie", jsr]])
+    if (u) add(src, fbId(u.replace(/\\\//g, "/")));
+
+  // ID videa v JSON dátach stránky – najčastejšie sa vyskytujúce je pravdepodobne hlavné video
+  const counts = new Map();
+  for (const re of [/"video_id":"(\d{8,})"/g, /"videoId":"(\d{8,})"/g,
+                    /facebook\.com\\?\/reel\\?\/(\d{8,})/g, /facebook\.com\\?\/[^"\s\\\/]+\\?\/videos\\?\/(\d{8,})/g]) {
+    let m;
+    while ((m = re.exec(html))) counts.set(m[1], (counts.get(m[1]) || 0) + 1);
+  }
+  for (const [id, n] of [...counts].sort((a, b) => b[1] - a[1]).slice(0, 3)) add("v JSON dátach (" + n + "x)", id);
+  return out;
+}
+
 // yt-dlp: reel -> watch/?v=ID&_rdr, m.facebook.com -> www.facebook.com
 function normFB(url) {
   const id = url.match(/facebook\.com\/reel\/(\d+)/)?.[1];
@@ -164,6 +194,28 @@ async function resolveFB(url) {
     ", velkost=" + html.length + " B, login stena=" + loginWall);
   const out = parseFB(html, id);
   if (out) return out;
+
+  // ID videa nepoznáme (typicky share/r/..., share/v/...): zisti ho zo stránky a postupuj ako yt-dlp pre /reel/<ID>
+  if (!id) {
+    const title = html.match(/<title[^>]*>([^<]{0,120})/i)?.[1];
+    log("rvp: FB nepoznam ID videa; <title>:", title ?? "(ziadny)",
+      "| progressive_urls=" + (html.match(/progressive_urls/g) || []).length +
+      ", playable_url=" + (html.match(/playable_url/g) || []).length +
+      ", browser_native=" + (html.match(/browser_native_/g) || []).length);
+    const ids = fbIdsFromHtml(html);
+    log("rvp: FB kandidati ID zo stranky:", ids.length ? ids.map((c) => c.id + " [" + c.src + "]").join(", ") : "ZIADNE");
+    if (!ids.length) log("rvp: FB zaciatok stranky (pre diagnostiku):", html.replace(/\s+/g, " ").slice(0, 600));
+    for (const c of ids.slice(0, 3)) {
+      const u = `https://www.facebook.com/watch/?v=${c.id}&_rdr`;
+      try {
+        log("rvp: FB skusam ID " + c.id + " [" + c.src + "] ->", u);
+        const h = await (await fetch(u, { headers: HDRS })).text();
+        if (LOGIN_RE.test(h)) loginWall = true;
+        const o2 = parseFB(h, c.id, "ID zo share stranky");
+        if (o2) return o2;
+      } catch (e) { log("rvp: FB ID " + c.id + " zlyhalo:", e?.message ?? e); }
+    }
+  }
 
   // iné varianty tej istej stránky – FB niekedy pri jednej z nich neposkytne dáta
   if (id) {
