@@ -10,6 +10,8 @@ const HDRS = {
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9",
 };
+// FB: bez cookies (yt-dlp ich neposiela; cookies z predošlých požiadaviek môžu zmeniť, čo FB vráti)
+const FB_FETCH = { headers: HDRS, credentials: "omit" };
 const LOGIN_RE = /id="login_form"|id="loginbutton"|You must log in to continue/;
 
 // Rozmery najbližšie k danému miestu v texte (aby sme nechytili rozmery iného objektu)
@@ -166,7 +168,7 @@ async function fbFromManifests(html, id, where) {
   for (const mu of near(mpd).slice(0, 3)) {
     try {
       log("rvp: FB stahujem MPD:", mu.url);
-      const xml = await (await fetch(mu.url, { headers: HDRS })).text();
+      const xml = await (await fetch(mu.url, FB_FETCH)).text();
       const best = mpdBest(xml, mu.url);
       if (best) {
         log("rvp: FB MPD OK: " + best.w + "x" + best.h + ", bitrate " + best.bw);
@@ -231,10 +233,10 @@ function parseFB(html, id, where = "hlavna stranka") {
   return dash ? { ...dash, note: "FB: len DASH, video bez zvuku" } : null;
 }
 
-async function resolveFB(url) {
+async function resolveFB(url, viaShare = false) {
   const first = normFB(url);
   log("rvp: FB stahujem stranku:", first);
-  const r = await fetch(first, { headers: HDRS });
+  const r = await fetch(first, FB_FETCH);
   const final = r.url || first;
   const html = await r.text();
   const id = fbId(final) || fbId(url);
@@ -256,14 +258,12 @@ async function resolveFB(url) {
     log("rvp: FB kandidati ID zo stranky:", ids.length ? ids.map((c) => c.id + " [" + c.src + "]").join(", ") : "ZIADNE");
     if (!ids.length) log("rvp: FB zaciatok stranky (pre diagnostiku):", html.replace(/\s+/g, " ").slice(0, 600));
     for (const c of ids.slice(0, 3)) {
-      const u = `https://www.facebook.com/watch/?v=${c.id}&_rdr`;
+      // presne ten istý postup ako pre odkaz facebook.com/reel/<ID>/ (kam presmeruje aj prehliadač)
+      const reelUrl = `https://www.facebook.com/reel/${c.id}/`;
       try {
-        log("rvp: FB skusam ID " + c.id + " [" + c.src + "] ->", u);
-        const h = await (await fetch(u, { headers: HDRS })).text();
-        if (LOGIN_RE.test(h)) loginWall = true;
-        const o2 = parseFB(h, c.id, "ID zo share stranky") || (await fbFromManifests(h, c.id, "ID zo share stranky"));
-        if (o2) return o2;
-      } catch (e) { log("rvp: FB ID " + c.id + " zlyhalo:", e?.message ?? e); }
+        log("rvp: FB nasiel som ID " + c.id + " [" + c.src + "] -> spracujem ako reel odkaz:", reelUrl);
+        return await resolveFB(reelUrl, true);
+      } catch (e) { log("rvp: FB reel " + c.id + " zlyhal:", e?.message ?? e); }
     }
   }
 
@@ -277,7 +277,7 @@ async function resolveFB(url) {
     ].filter((u) => u !== first);
     const o = await firstOk(
       alts.map(async (u) => {
-        const h = await (await fetch(u, { headers: HDRS })).text();
+        const h = await (await fetch(u, FB_FETCH)).text();
         if (LOGIN_RE.test(h)) loginWall = true;
         log("rvp: FB alternativa:", u, "(" + h.length + " B)");
         return parseFB(h, id, "alternativa") || (await fbFromManifests(h, id, "alternativa"));
