@@ -81,9 +81,9 @@ const hasOurs = (m) => Array.from(m?.attachments ?? []).some((a) => String(a?.id
 // MESSAGE_UPDATE pošleme VÝHRADNE pre správu, ktorá je práve v MessageStore.
 // Inak by Discord z čiastočného updatu mohol vytvoriť "prázdnu" správu s prehrávačom
 // (napr. pre dočasné ID odosielanej správy, zmazanú správu alebo správu mimo načítaného kanála).
-async function deliver(id, channel_id, base, d) {
+async function deliver(id, channel_id, base, d, link) {
   const canVerify = typeof MessageStore?.getMessage === "function";
-  const delays = [0, 600, 1500, 4000, 9000];
+  const delays = [0, 1500, 6000];   // najviac 3 pokusy, dispatch len ak príloha v store stále chýba
   for (const wait of delays) {
     if (wait) await new Promise((r) => setTimeout(r, wait));
     if (!active) return;
@@ -92,9 +92,12 @@ async function deliver(id, channel_id, base, d) {
       if (!cur) continue;        // správa v store (ešte) nie je – nič nevytváraj
       if (hasOurs(cur)) return;  // už je tam
       // správa už nemá videolink (upravená / iná správa) -> nič nepridávaj
-      if (typeof cur.content !== "string" || !detect(cur.content)) return;
+      const now = typeof cur.content === "string" ? detect(cur.content) : null;
+      if (!now) return;
+      // video patrí k odkazu, pre ktorý sme ho našli; ak má správa v store iný odkaz, nepridávaj
+      if (link && now.link !== link) { dbg("preskakujem – iny odkaz v sprave", id); return; }
     }
-    dbg("update", id, wait ? "pokus po " + wait + "ms" : "pokus 1");
+    dbg("update", id, "link:", link, "url:", String(d.url).slice(0, 60) + "…" + String(d.url).slice(-24));
     const curAtts = canVerify ? Array.from(MessageStore.getMessage(channel_id, id)?.attachments ?? base) : base;
     FluxDispatcher.dispatch({
       type: "MESSAGE_UPDATE",
