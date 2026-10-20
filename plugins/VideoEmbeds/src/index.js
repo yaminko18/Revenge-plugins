@@ -37,6 +37,11 @@ function detect(content) {
 // Diagnostika: Revenge -> Nastavenia -> Developer -> Debug logs, hľadaj "rvp:"
 const dbg = (...a) => logger.log("rvp:", ...a);
 
+// Správy, ktorým sa práve hľadá/doručuje video (id -> channel_id).
+const pendingIds = new Map();
+const cmpId = (a, b) => String(a).length - String(b).length || (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function process(msg) {
   if (msg && msg.id && Array.isArray(msg.attachments) && msg.attachments.some(isMine)) {
     // náš prehrávač smie byť len na správe s vlastným ID a (ak poznáme obsah) s vlastným odkazom
@@ -60,10 +65,14 @@ function process(msg) {
 
   const base = msg.attachments ?? [];
   const channel_id = msg.channel_id;
-  resolve(found.link, found.kind).then((d) => {
-    if (!d || !channel_id) { dbg("nenaslo", found.kind, msg.id); return; }
-    deliver(msg.id, channel_id, base, d, found.link);
-  });
+  pendingIds.set(msg.id, channel_id);
+  resolve(found.link, found.kind)
+    .then((d) => {
+      if (!d || !channel_id) { dbg("nenaslo", found.kind, msg.id); return; }
+      return deliver(msg.id, channel_id, base, d, found.link);
+    })
+    .catch((e) => logger.log("deliver error", e))
+    .finally(() => pendingIds.delete(msg.id));
 }
 
 // Pošle MESSAGE_UPDATE a skontroluje v MessageStore, či sa attachment naozaj uložil.
@@ -93,6 +102,23 @@ async function takeSlot() {
   if (at > now) await new Promise((r) => setTimeout(r, at - now));
 }
 
+// Je to najnovšia správa s videolinkom v kanáli? (Discord jej inak priradil staršie video.)
+const LAST_DELAY = 900;
+function isNewestLinked(id, channel_id) {
+  try {
+    for (const [pid, cid] of pendingIds) if (cid === channel_id && cmpId(pid, id) > 0) return false;
+    const col = MessageStore?.getMessages?.(channel_id);
+    const arr = col?._array ?? col?.toArray?.() ?? [];
+    for (const m of arr)
+      if (m?.id && cmpId(m.id, id) > 0 && typeof m.content === "string" && detect(m.content)) return false;
+  } catch {}
+  return true;
+}
+const hasOlderPending = (id, channel_id) => {
+  for (const [pid, cid] of pendingIds) if (cid === channel_id && pid !== id && cmpId(pid, id) < 0) return true;
+  return false;
+};
+
 async function deliver(id, channel_id, base, d, link) {
   const canVerify = typeof MessageStore?.getMessage === "function";
   const delays = [0, 1500, 6000];   // najviac 3 pokusy, dispatch len ak príloha v store stále chýba
@@ -115,6 +141,13 @@ async function deliver(id, channel_id, base, d, link) {
     let st = state();
     if (st === "done") return;
     if (st === "retry") continue;
+    if (isNewestLinked(id, channel_id)) {
+      // najnovšia správa: počkaj, kým sa doručia staršie (max 5 s), a ešte chvíľu navyše
+      const t0 = Date.now();
+      while (active && hasOlderPending(id, channel_id) && Date.now() - t0 < 5000) await sleep(150);
+      await sleep(LAST_DELAY);
+      if (!active) return;
+    }
     await takeSlot();                              // po jednom, s odstupom
     if (!active) return;
     st = state();                                  // počas čakania sa mohlo niečo zmeniť
@@ -164,7 +197,11 @@ function scanChannel(channelId) {
       }
 
       if (!found || atts.some((a) => String(a?.content_type ?? "").startsWith("video/"))) continue;
-      resolve(found.link, found.kind).then((d) => { if (d) deliver(m.id, cid, atts, d, found.link); });
+      pendingIds.set(m.id, cid);
+      resolve(found.link, found.kind)
+        .then((d) => (d ? deliver(m.id, cid, atts, d, found.link) : null))
+        .catch((e) => logger.log("deliver error", e))
+        .finally(() => pendingIds.delete(m.id));
     }
   } catch (e) { logger.log("scan error", e); }
 }
