@@ -98,33 +98,41 @@ function anchorsFor(html, id) {
 }
 const distTo = (anchors, idx) => anchors.reduce((m, a) => Math.min(m, Math.abs(a - idx)), Infinity);
 
-function dashVideoOnly(html, anchors = []) {
+// Najlepšie (najvyšší bitrate) video-only mp4 z DASH manifestu (XML). baseUrl: pre relatívne <BaseURL>.
+function mpdBest(xml, baseUrl) {
   const decode = (x) => x.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
+  let best = null;
+  const sets = xml.match(/<AdaptationSet[\s\S]*?<\/AdaptationSet>/g) || [];
+  for (const set of sets) {
+    const head = set.match(/<AdaptationSet([^>]*)>/)?.[1] ?? "";
+    const reps = set.match(/<Representation[\s\S]*?<\/Representation>/g) || [];
+    for (const rep of reps) {
+      const attrs = rep.match(/<Representation([^>]*)>/)?.[1] ?? "";
+      const isVideo = /contentType="video"/.test(head) || /mimeType="video\//.test(head + attrs);
+      const base = rep.match(/<BaseURL>([^<]+)<\/BaseURL>/)?.[1];
+      if (!isVideo || !base) continue;
+      let url = decode(base);
+      if (baseUrl && !/^https?:/i.test(url)) { try { url = new URL(url, baseUrl).href; } catch {} }
+      const bw = +(attrs.match(/bandwidth="(\d+)"/)?.[1] ?? 0);
+      const cand = {
+        url, bw,
+        w: +(attrs.match(/\swidth="(\d+)"/)?.[1] ?? 0),
+        h: +(attrs.match(/\sheight="(\d+)"/)?.[1] ?? 0),
+      };
+      if (!best || cand.bw > best.bw) best = cand;
+    }
+  }
+  return best;
+}
+
+function dashVideoOnly(html, anchors = []) {
   const re = /"(?:manifest_xml|dash_manifest)":"((?:[^"\\]|\\.)*)"/g;
   const found = [];
   let m;
   while ((m = re.exec(html))) {
     let xml;
     try { xml = JSON.parse('"' + m[1] + '"'); } catch { continue; }
-    let best = null;
-    const sets = xml.match(/<AdaptationSet[\s\S]*?<\/AdaptationSet>/g) || [];
-    for (const set of sets) {
-      const head = set.match(/<AdaptationSet([^>]*)>/)?.[1] ?? "";
-      const reps = set.match(/<Representation[\s\S]*?<\/Representation>/g) || [];
-      for (const rep of reps) {
-        const attrs = rep.match(/<Representation([^>]*)>/)?.[1] ?? "";
-        const isVideo = /contentType="video"/.test(head) || /mimeType="video\//.test(head + attrs);
-        const base = rep.match(/<BaseURL>([^<]+)<\/BaseURL>/)?.[1];
-        if (!isVideo || !base) continue;
-        const bw = +(attrs.match(/bandwidth="(\d+)"/)?.[1] ?? 0);
-        const cand = {
-          url: decode(base), bw,
-          w: +(attrs.match(/\swidth="(\d+)"/)?.[1] ?? 0),
-          h: +(attrs.match(/\sheight="(\d+)"/)?.[1] ?? 0),
-        };
-        if (!best || cand.bw > best.bw) best = cand;
-      }
-    }
+    const best = mpdBest(xml);
     if (best) found.push({ ...best, idx: m.index });
   }
   if (!found.length) return null;
@@ -132,6 +140,47 @@ function dashVideoOnly(html, anchors = []) {
     ? found.reduce((p, c) => (distTo(anchors, c.idx) < distTo(anchors, p.idx) ? c : p))
     : found[0];
   return { url: pick.url, w: pick.w, h: pick.h };
+}
+
+// Nový formát FB (yt-dlp: videoDeliveryResponseResult): odkazy na manifesty namiesto priamych mp4
+function fbManifestUrls(html) {
+  const grab = (key) => {
+    const out = [];
+    const re = new RegExp('"' + key + '":"([^"]+)"', "g");
+    let m;
+    while ((m = re.exec(html))) out.push({ url: unesc(m[1]), idx: m.index });
+    return out;
+  };
+  return { mpd: grab("manifest_url"), hls: grab("hls_playlist_url") };
+}
+
+const fbKeyCounts = (html) =>
+  ["progressive_urls", "playable_url", "browser_native_", "manifest_url", "hls_playlist_url", "manifest_xml", "dash_manifest", "video_id"]
+    .map((k) => k + "=" + (html.split(k).length - 1)).join(", ");
+
+async function fbFromManifests(html, id, where) {
+  const anchors = anchorsFor(html, id);
+  const near = (arr) => (anchors.length ? arr.slice().sort((a, b) => distTo(anchors, a.idx) - distTo(anchors, b.idx)) : arr);
+  const { mpd, hls } = fbManifestUrls(html);
+  log("rvp: FB manifesty [" + where + "]: mpd=" + mpd.length + ", hls=" + hls.length);
+  for (const mu of near(mpd).slice(0, 3)) {
+    try {
+      log("rvp: FB stahujem MPD:", mu.url);
+      const xml = await (await fetch(mu.url, { headers: HDRS })).text();
+      const best = mpdBest(xml, mu.url);
+      if (best) {
+        log("rvp: FB MPD OK: " + best.w + "x" + best.h + ", bitrate " + best.bw);
+        return { url: best.url, w: best.w, h: best.h, note: "FB: len DASH, video bez zvuku" };
+      }
+      log("rvp: FB MPD bez pouzitelneho videa (" + xml.length + " B)");
+    } catch (e) { log("rvp: FB MPD zlyhalo:", e?.message ?? e); }
+  }
+  if (hls.length) {
+    const h = near(hls)[0];
+    log("rvp: FB pouzivam HLS playlist:", h.url);
+    return { url: h.url, w: 0, h: 0, note: "FB: len HLS" };
+  }
+  return null;
 }
 
 // vráti { url, w, h, note? } alebo null; `id` = ID videa z odkazu (ak je známe)
@@ -177,7 +226,7 @@ function parseFB(html, id, where = "hlavna stranka") {
       ", rozmery=" + (d ? d.w + "x" + d.h : "?"));
     return { url: pick.url, w: d?.w || 0, h: d?.h || 0 };
   }
-  log("rvp: FB parse [" + where + "]: ziadne mp4 kandidaty, skusam DASH (kotvy ID=" + anchors.length + ")");
+  log("rvp: FB parse [" + where + "]: ziadne mp4 kandidaty, skusam DASH (kotvy ID=" + anchors.length + ") | kluce v stranke: " + fbKeyCounts(html));
   const dash = dashVideoOnly(html, anchors);
   return dash ? { ...dash, note: "FB: len DASH, video bez zvuku" } : null;
 }
@@ -194,6 +243,7 @@ async function resolveFB(url) {
     ", velkost=" + html.length + " B, login stena=" + loginWall);
   const out = parseFB(html, id);
   if (out) return out;
+  if (id) { const om = await fbFromManifests(html, id, "hlavna stranka"); if (om) return om; }
 
   // ID videa nepoznáme (typicky share/r/..., share/v/...): zisti ho zo stránky a postupuj ako yt-dlp pre /reel/<ID>
   if (!id) {
@@ -211,7 +261,7 @@ async function resolveFB(url) {
         log("rvp: FB skusam ID " + c.id + " [" + c.src + "] ->", u);
         const h = await (await fetch(u, { headers: HDRS })).text();
         if (LOGIN_RE.test(h)) loginWall = true;
-        const o2 = parseFB(h, c.id, "ID zo share stranky");
+        const o2 = parseFB(h, c.id, "ID zo share stranky") || (await fbFromManifests(h, c.id, "ID zo share stranky"));
         if (o2) return o2;
       } catch (e) { log("rvp: FB ID " + c.id + " zlyhalo:", e?.message ?? e); }
     }
@@ -230,7 +280,7 @@ async function resolveFB(url) {
         const h = await (await fetch(u, { headers: HDRS })).text();
         if (LOGIN_RE.test(h)) loginWall = true;
         log("rvp: FB alternativa:", u, "(" + h.length + " B)");
-        return parseFB(h, id, "alternativa");
+        return parseFB(h, id, "alternativa") || (await fbFromManifests(h, id, "alternativa"));
       })
     );
     if (o) return o;
