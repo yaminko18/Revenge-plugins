@@ -1,9 +1,9 @@
 // index.js – napojenie na Discord: pri správe s videolinkom pridá video prílohu (prehrávač).
 // Jednoduchý tok podľa pôvodnej fungujúcej verzie: nájdi video -> jeden MESSAGE_UPDATE.
-import { FB_RE, IG_RE, TW_RE, MARK } from "./helpers.js";
+import { log, FB_RE, IG_RE, TW_RE, MARK } from "./helpers.js";
 import { resolve, cache, clearCache } from "./resolvers.js";
 
-const { patcher, metro, logger } = vendetta;
+const { patcher, metro } = vendetta;
 const FluxDispatcher =
   metro.common?.FluxDispatcher ?? metro.findByProps("dispatch", "subscribe");
 
@@ -48,11 +48,11 @@ function process(msg, load = false) {
 
   const base = msg.attachments ?? [];
   const channel_id = msg.channel_id;
-  logger.log("rvp: hladam", found.kind, msg.id);
+  log("rvp: hladam", found.kind, msg.id);
   resolve(found.link, found.kind).then((d) => {
-    if (!d || !channel_id) { logger.log("rvp: nenaslo", found.kind, msg.id); return; }
+    if (!d || !channel_id) { log("rvp: nenaslo", found.kind, msg.id); return; }
     const go = () => {
-      logger.log("rvp: update", msg.id, "link:", found.link, "url:", tail(d));
+      log("rvp: update", msg.id, "link:", found.link, "url:", tail(d));
       FluxDispatcher.dispatch({
         type: "MESSAGE_UPDATE",
         message: { id: msg.id, channel_id, attachments: [...base, makeAtt(msg.id, d)] },
@@ -91,7 +91,7 @@ function attach(id, channel_id, link, d) {
   const cur = MessageStore?.getMessage?.(channel_id, id);
   if (!cur || hasVideo(cur)) return;
   if (typeof cur.content !== "string" || detect(cur.content)?.link !== link) return;
-  logger.log("rvp: update (scan)", id, "link:", link, "url:", tail(d));
+  log("rvp: update (scan)", id, "link:", link, "url:", tail(d));
   FluxDispatcher.dispatch({
     type: "MESSAGE_UPDATE",
     message: { id, channel_id, attachments: [...Array.from(cur.attachments ?? []), makeAtt(id, d)] },
@@ -115,12 +115,13 @@ function scanChannel(channelId) {
       }
       resolve(found.link, found.kind).then((d) => { if (d) attachSoon(id, cid, found.link, d); });
     }
-  } catch (e) { logger.log("scan error", e); }
+  } catch (e) { log("scan error", e); }
 }
 
 let unpatch;
 export default {
   onLoad() {
+    log("rvp: plugin nacitany");
     // po štarte: aktuálny kanál (store sa môže plniť postupne)
     for (const t of [500, 3000]) setTimeout(() => scanChannel(SelectedChannelStore?.getChannelId?.()), t);
     unpatch = patcher.before("dispatch", FluxDispatcher, (args) => {
@@ -146,7 +147,7 @@ export default {
             scanChannel(ev.channelId);                       // hneď (cache -> pred vykreslením)
             break;
         }
-      } catch (e) { logger.log("patch error", e); }
+      } catch (e) { log("patch error", e); }
     });
   },
   onUnload() {

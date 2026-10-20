@@ -1,6 +1,5 @@
 // resolvers.js – Facebook, Instagram, X/Twitter + cache a resolve()
-import { UA_DESKTOP, TTL, NEG_TTL, unesc, jsonAfter, jsonAll, shortcodeToId, firstOk, probeDims } from "./helpers.js";
-const { logger } = vendetta;
+import { log, UA_DESKTOP, TTL, NEG_TTL, unesc, jsonAfter, jsonAll, shortcodeToId, firstOk, probeDims } from "./helpers.js";
 
 export const cache = new Map();   // link -> { exp, data }  (data = null pri zlyhaní)
 const pending = new Map(); // link -> Promise
@@ -251,7 +250,7 @@ async function resolveIG(url) {
         if (hit) return hit;
       }
     }
-  } catch (e) { logger.log("IG page zlyhal", e); }
+  } catch (e) { log("IG page zlyhal", e); }
   if (notVideo) throw new Error("IG: príspevok nie je video");
 
   // 2) embed stránka (yt-dlp ju už nepoužíva; môže, ale nemusí fungovať)
@@ -272,7 +271,7 @@ async function resolveIG(url) {
         w = heightFirst ? b : a;
       }
       return { url: v, w, h };
-    } catch (e) { logger.log("IG embed zlyhal", e); }
+    } catch (e) { log("IG embed zlyhal", e); }
   }
 
   // 3) web API (yt-dlp ho používa len s prihlásením – bez sessionid vráti login)
@@ -439,10 +438,10 @@ async function resolveTW(url) {
   try {
     status = await twGraphql(p.id);
   } catch (e) {
-    logger.log("X graphql zlyhal", e?.message ?? e);
+    log("X graphql zlyhal", e?.message ?? e);
     if (e?.fatal) throw e;
     try { status = await twSyndication(p.id); }
-    catch (e2) { logger.log("X syndication zlyhal", e2?.message ?? e2); throw e; }
+    catch (e2) { log("X syndication zlyhal", e2?.message ?? e2); throw e; }
   }
   return twPick(status, p.index);
 }
@@ -466,7 +465,7 @@ export function resolve(link, kind) {
       return d;
     })
     .catch((e) => {
-      logger.log("resolve:", e?.message ?? e);
+      log("resolve:", e?.message ?? e);
       cache.set(link, { exp: Date.now() + NEG_TTL, data: null });
       return null;
     })

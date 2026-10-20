@@ -1,5 +1,6 @@
 // helpers.js – konfigurácia, malé pomôcky, čítanie rozmerov z mp4
-const { logger } = vendetta;
+// logy idú cez console (Revenge ich zrkadlí do debuggera)
+export const log = (...a) => { try { console.log(...a); } catch {} };
 
 // ---------------------------------------------------------------- config
 export const FB_RE = /https?:\/\/(?:[\w-]+\.)?(?:facebook\.com\/(?:reel\/\d+|watch[^\s<>"]*|video\.php[^\s<>"]*|share\/(?:v|r)\/[\w-]+|[^\s\/]+\/videos\/[^\s<>"]+)|fb\.watch\/[\w-]+)[^\s<>"]*/i;
@@ -153,7 +154,7 @@ export async function probeDims(url) {
     });
     return mp4Dims(b64ToBytes(b64));
   } catch (e) {
-    logger.log("probe zlyhal", e);
+    log("probe zlyhal", e);
     return null;
   } finally {
     clearTimeout(timer);
