@@ -110,7 +110,7 @@ function scanChannel(channelId) {
       const id = m.id, cid = m.channel_id ?? channelId;
       const hit = cache.get(found.link);
       if (hit && Date.now() < hit.exp) {
-        if (hit.data) attachSoon(id, cid, found.link, hit.data);
+        if (hit.data) attach(id, cid, found.link, hit.data);   // hneď, pred vykreslením (bez neskorého skoku)
         continue;
       }
       resolve(found.link, found.kind).then((d) => { if (d) attachSoon(id, cid, found.link, d); });
@@ -136,11 +136,14 @@ export default {
           case "LOAD_MESSAGES_SUCCESS_CACHED":   // kanál načítaný z cache (bez tohto sa správy nespracujú)
             ev.messages?.forEach((m) => process(m, true));
             break;
+          default:
+            // iné udalosti s načítanými správami (napr. načítanie okolo správy)
+            if (/^LOAD_MESSAGES/.test(ev.type) && Array.isArray(ev.messages))
+              ev.messages.forEach((m) => process(m, true));
+            break;
           case "CHANNEL_SELECT":
             // návrat do kanála: správy sú v store a nič sa nedispatchuje
             scanChannel(ev.channelId);                       // hneď (cache -> pred vykreslením)
-            setTimeout(() => scanChannel(ev.channelId), 400);
-            setTimeout(() => scanChannel(ev.channelId), 2500);
             break;
         }
       } catch (e) { logger.log("patch error", e); }
