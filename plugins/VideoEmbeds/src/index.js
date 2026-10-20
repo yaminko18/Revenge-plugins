@@ -46,8 +46,10 @@ function process(msg) {
 
   const base = msg.attachments ?? [];
   const channel_id = msg.channel_id;
+  logger.log("rvp: hladam", found.kind, msg.id);
   resolve(found.link, found.kind).then((d) => {
-    if (!d || !channel_id) return;
+    if (!d || !channel_id) { logger.log("rvp: nenaslo", found.kind, msg.id); return; }
+    logger.log("rvp: update", msg.id);
     FluxDispatcher.dispatch({
       type: "MESSAGE_UPDATE",
       message: { id: msg.id, channel_id, attachments: [...base, makeAtt(msg.id, d)] },
@@ -68,6 +70,7 @@ export default {
             process(ev.message);
             break;
           case "LOAD_MESSAGES_SUCCESS":
+          case "LOAD_MESSAGES_SUCCESS_CACHED":   // kanál načítaný z cache (bez tohto sa správy nespracujú)
             ev.messages?.forEach(process);
             break;
         }
