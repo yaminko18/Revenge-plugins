@@ -10,7 +10,7 @@ export const TW_RE = /https?:\/\/(?:(?:www|m(?:obile)?)\.)?(?:twitter|x)\.com\/(
 export const UA_DESKTOP =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 export const TTL = 20 * 60 * 1000; // podpísané URL expirujú, necachuj dlho
-export const NEG_TTL = 45 * 1000;  // neúspech zapamätaj len krátko, nech sa dá skúsiť znova
+export const NEG_TTL = 10 * 1000;  // neúspech zapamätaj len krátko, nech sa dá skúsiť znova
 export const MARK = "rvp-";
 export const isMine = (a) => String(a?.id ?? "").startsWith(MARK);
 

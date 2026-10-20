@@ -18,6 +18,8 @@ const makeAtt = (msgId, d) => ({
   size: 0,
 });
 
+const tail = (d) => String(d?.url ?? "").slice(0, 40) + "…" + String(d?.url ?? "").slice(-28);
+
 const hasVideo = (msg) =>
   (msg.attachments ?? []).some(
     (a) => String(a.id).startsWith(MARK) || String(a.content_type ?? "").startsWith("video/")
@@ -32,7 +34,7 @@ function detect(content) {
 }
 
 // upraví správu v payloade (cache) alebo po nájdení videa pošle MESSAGE_UPDATE
-function process(msg) {
+function process(msg, load = false) {
   if (!msg || typeof msg.content !== "string" || !msg.content || !msg.id) return;
   if (hasVideo(msg)) return;
   const found = detect(msg.content);
@@ -49,11 +51,14 @@ function process(msg) {
   logger.log("rvp: hladam", found.kind, msg.id);
   resolve(found.link, found.kind).then((d) => {
     if (!d || !channel_id) { logger.log("rvp: nenaslo", found.kind, msg.id); return; }
-    logger.log("rvp: update", msg.id);
-    FluxDispatcher.dispatch({
-      type: "MESSAGE_UPDATE",
-      message: { id: msg.id, channel_id, attachments: [...base, makeAtt(msg.id, d)] },
-    });
+    const go = () => {
+      logger.log("rvp: update", msg.id, "link:", found.link, "url:", tail(d));
+      FluxDispatcher.dispatch({
+        type: "MESSAGE_UPDATE",
+        message: { id: msg.id, channel_id, attachments: [...base, makeAtt(msg.id, d)] },
+      });
+    };
+    if (load && isNewestLinked(msg.id, channel_id)) setTimeout(go, LAST_DELAY); else go();
   });
 }
 
@@ -66,12 +71,27 @@ const SelectedChannelStore = (() => {
   try { return metro.findByStoreName("SelectedChannelStore"); } catch { return null; }
 })();
 
+// Posledné (najnovšie) video v kanáli sa pridáva s malým oneskorením po ostatných.
+const LAST_DELAY = 800;
+function isNewestLinked(id, channel_id) {
+  try {
+    const col = MessageStore?.getMessages?.(channel_id);
+    const arr = col?._array ?? col?.toArray?.() ?? [];
+    const gt = (a, b) => String(a).length - String(b).length || (String(a) > String(b) ? 1 : -1);
+    for (const m of arr)
+      if (m?.id && m.id !== id && gt(m.id, id) > 0 && typeof m.content === "string" && detect(m.content)) return false;
+  } catch {}
+  return true;
+}
+const attachSoon = (id, cid, link, d) =>
+  isNewestLinked(id, cid) ? setTimeout(() => attach(id, cid, link, d), LAST_DELAY) : attach(id, cid, link, d);
+
 // Pridá video správe, ak je v store, nemá video a stále obsahuje ten istý odkaz. Jeden dispatch.
 function attach(id, channel_id, link, d) {
   const cur = MessageStore?.getMessage?.(channel_id, id);
   if (!cur || hasVideo(cur)) return;
   if (typeof cur.content !== "string" || detect(cur.content)?.link !== link) return;
-  logger.log("rvp: update (scan)", id);
+  logger.log("rvp: update (scan)", id, "link:", link, "url:", tail(d));
   FluxDispatcher.dispatch({
     type: "MESSAGE_UPDATE",
     message: { id, channel_id, attachments: [...Array.from(cur.attachments ?? []), makeAtt(id, d)] },
@@ -90,10 +110,10 @@ function scanChannel(channelId) {
       const id = m.id, cid = m.channel_id ?? channelId;
       const hit = cache.get(found.link);
       if (hit && Date.now() < hit.exp) {
-        if (hit.data) attach(id, cid, found.link, hit.data);   // hneď, ešte pred vykreslením kanála
+        if (hit.data) attachSoon(id, cid, found.link, hit.data);
         continue;
       }
-      resolve(found.link, found.kind).then((d) => { if (d) attach(id, cid, found.link, d); });
+      resolve(found.link, found.kind).then((d) => { if (d) attachSoon(id, cid, found.link, d); });
     }
   } catch (e) { logger.log("scan error", e); }
 }
@@ -114,7 +134,7 @@ export default {
             break;
           case "LOAD_MESSAGES_SUCCESS":
           case "LOAD_MESSAGES_SUCCESS_CACHED":   // kanál načítaný z cache (bez tohto sa správy nespracujú)
-            ev.messages?.forEach(process);
+            ev.messages?.forEach((m) => process(m, true));
             break;
           case "CHANNEL_SELECT":
             // návrat do kanála: správy sú v store a nič sa nedispatchuje
