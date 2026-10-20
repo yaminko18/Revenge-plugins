@@ -81,22 +81,46 @@ const hasOurs = (m) => Array.from(m?.attachments ?? []).some((a) => String(a?.id
 // MESSAGE_UPDATE pošleme VÝHRADNE pre správu, ktorá je práve v MessageStore.
 // Inak by Discord z čiastočného updatu mohol vytvoriť "prázdnu" správu s prehrávačom
 // (napr. pre dočasné ID odosielanej správy, zmazanú správu alebo správu mimo načítaného kanála).
+// Prehrávače pridávame po jednom s odstupom: keď sa dva pridali naraz (dve správy s videom
+// pod sebou), Discord v oboch ukázal to isté video. Po návrate do kanála (príloha už v store
+// pri prvom vykreslení) to bolo v poriadku.
+const GAP = 400;
+let nextSlot = 0;
+async function takeSlot() {
+  const now = Date.now();
+  const at = Math.max(now, nextSlot);
+  nextSlot = at + GAP;
+  if (at > now) await new Promise((r) => setTimeout(r, at - now));
+}
+
 async function deliver(id, channel_id, base, d, link) {
   const canVerify = typeof MessageStore?.getMessage === "function";
   const delays = [0, 1500, 6000];   // najviac 3 pokusy, dispatch len ak príloha v store stále chýba
+
+  // "ok" = môžeme pridať, "done" = netreba / nemá zmysel, "retry" = skús neskôr
+  const state = () => {
+    if (!canVerify) return "ok";
+    const cur = MessageStore.getMessage(channel_id, id);
+    if (!cur) return "retry";                      // správa v store (ešte) nie je – nič nevytváraj
+    if (hasOurs(cur)) return "done";               // už je tam
+    const now = typeof cur.content === "string" ? detect(cur.content) : null;
+    if (!now) return "done";                       // správa už nemá videolink
+    if (link && now.link !== link) { dbg("preskakujem – iny odkaz v sprave", id); return "done"; }
+    return "ok";
+  };
+
   for (const wait of delays) {
     if (wait) await new Promise((r) => setTimeout(r, wait));
     if (!active) return;
-    if (canVerify) {
-      const cur = MessageStore.getMessage(channel_id, id);
-      if (!cur) continue;        // správa v store (ešte) nie je – nič nevytváraj
-      if (hasOurs(cur)) return;  // už je tam
-      // správa už nemá videolink (upravená / iná správa) -> nič nepridávaj
-      const now = typeof cur.content === "string" ? detect(cur.content) : null;
-      if (!now) return;
-      // video patrí k odkazu, pre ktorý sme ho našli; ak má správa v store iný odkaz, nepridávaj
-      if (link && now.link !== link) { dbg("preskakujem – iny odkaz v sprave", id); return; }
-    }
+    let st = state();
+    if (st === "done") return;
+    if (st === "retry") continue;
+    await takeSlot();                              // po jednom, s odstupom
+    if (!active) return;
+    st = state();                                  // počas čakania sa mohlo niečo zmeniť
+    if (st === "done") return;
+    if (st === "retry") continue;
+
     dbg("update", id, "link:", link, "url:", String(d.url).slice(0, 60) + "…" + String(d.url).slice(-24));
     const curAtts = canVerify ? Array.from(MessageStore.getMessage(channel_id, id)?.attachments ?? base) : base;
     FluxDispatcher.dispatch({
