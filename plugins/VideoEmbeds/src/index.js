@@ -57,9 +57,52 @@ function process(msg) {
   });
 }
 
+// Správy, ktoré sú už v MessageStore (návrat do kanála, kanál otvorený pri štarte appky),
+// neprejdú cez dispatch – Discord pre ne neposiela žiadnu udalosť. Prejdeme ich sami.
+const MessageStore = (() => {
+  try { return metro.findByStoreName("MessageStore"); } catch { return null; }
+})();
+const SelectedChannelStore = (() => {
+  try { return metro.findByStoreName("SelectedChannelStore"); } catch { return null; }
+})();
+
+// Pridá video správe, ak je v store, nemá video a stále obsahuje ten istý odkaz. Jeden dispatch.
+function attach(id, channel_id, link, d) {
+  const cur = MessageStore?.getMessage?.(channel_id, id);
+  if (!cur || hasVideo(cur)) return;
+  if (typeof cur.content !== "string" || detect(cur.content)?.link !== link) return;
+  logger.log("rvp: update (scan)", id);
+  FluxDispatcher.dispatch({
+    type: "MESSAGE_UPDATE",
+    message: { id, channel_id, attachments: [...Array.from(cur.attachments ?? []), makeAtt(id, d)] },
+  });
+}
+
+function scanChannel(channelId) {
+  if (!channelId || !MessageStore?.getMessages) return;
+  try {
+    const col = MessageStore.getMessages(channelId);
+    const arr = col?._array ?? col?.toArray?.() ?? [];
+    for (const m of arr) {
+      if (!m?.id || typeof m.content !== "string" || !m.content || hasVideo(m)) continue;
+      const found = detect(m.content);
+      if (!found) continue;
+      const id = m.id, cid = m.channel_id ?? channelId;
+      const hit = cache.get(found.link);
+      if (hit && Date.now() < hit.exp) {
+        if (hit.data) attach(id, cid, found.link, hit.data);   // hneď, ešte pred vykreslením kanála
+        continue;
+      }
+      resolve(found.link, found.kind).then((d) => { if (d) attach(id, cid, found.link, d); });
+    }
+  } catch (e) { logger.log("scan error", e); }
+}
+
 let unpatch;
 export default {
   onLoad() {
+    // po štarte: aktuálny kanál (store sa môže plniť postupne)
+    for (const t of [500, 3000]) setTimeout(() => scanChannel(SelectedChannelStore?.getChannelId?.()), t);
     unpatch = patcher.before("dispatch", FluxDispatcher, (args) => {
       const ev = args[0];
       if (!ev) return;
@@ -72,6 +115,12 @@ export default {
           case "LOAD_MESSAGES_SUCCESS":
           case "LOAD_MESSAGES_SUCCESS_CACHED":   // kanál načítaný z cache (bez tohto sa správy nespracujú)
             ev.messages?.forEach(process);
+            break;
+          case "CHANNEL_SELECT":
+            // návrat do kanála: správy sú v store a nič sa nedispatchuje
+            scanChannel(ev.channelId);                       // hneď (cache -> pred vykreslením)
+            setTimeout(() => scanChannel(ev.channelId), 400);
+            setTimeout(() => scanChannel(ev.channelId), 2500);
             break;
         }
       } catch (e) { logger.log("patch error", e); }
