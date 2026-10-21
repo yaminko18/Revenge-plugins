@@ -1,5 +1,5 @@
 // resolvers.js – Facebook, Instagram, X/Twitter + cache a resolve()
-import { log, UA_DESKTOP, TTL, NEG_TTL, unesc, jsonAfter, jsonAll, shortcodeToId, firstOk, probeDims } from "./helpers.js";
+import { log, UA_DESKTOP, TTL, NEG_TTL, unesc, jsonAfter, jsonAll, shortcodeToId, probeDims } from "./helpers.js";
 
 export const cache = new Map();   // link -> { exp, data }  (data = null pri zlyhaní)
 const pending = new Map(); // link -> Promise
@@ -52,6 +52,9 @@ const fbId = (u) =>
   u.match(/\/videos\/(?:[^\/?#]+\/)?(\d+)/)?.[1] ||
   null;
 
+// Chyba, ktorá sa nezopakuje (odkaz nie je video): bez opakovania a s dlhou pamäťou neúspechu
+const permanent = (msg) => Object.assign(new Error(msg), { permanent: true });
+
 // Share odkaz (share/r/XYZ, share/v/XYZ) -> číselné ID videa zo stránky (og:url / canonical ukazuje na /reel/<ID>)
 function fbIdFromShare(html) {
   const pats = [
@@ -65,17 +68,7 @@ function fbIdFromShare(html) {
     const id = m && fbId(m[1]);
     if (id) return id;
   }
-  // og:url / canonical nemusia mať ID (napr. share/v/...): vezmi najčastejšie ID videa v dátach stránky
-  const counts = new Map();
-  for (const re of [/"video_id":"(\d{10,})"/g, /"videoId":"(\d{10,})"/g, /\\?\/(?:reel|videos)\\?\/(\d{10,})/g]) {
-    let m;
-    while ((m = re.exec(html))) counts.set(m[1], (counts.get(m[1]) || 0) + 1);
-  }
-  const top = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 3);
-  log("rvp: FB share: og:url/canonical bez ID; ID z dat stranky:",
-    top.length ? top.map(([id, n]) => id + " (" + n + "x)").join(", ") : "ZIADNE",
-    "| <title>:", html.match(/<title[^>]*>([^<]{0,80})/i)?.[1] ?? "(ziadny)");
-  return top[0]?.[0] ?? null;
+  return null;
 }
 
 // yt-dlp: reel -> watch/?v=ID&_rdr, m.facebook.com -> www.facebook.com
@@ -196,26 +189,31 @@ async function resolveFB(url) {
   // share odkaz: zisti číselné ID a spracuj ako facebook.com/reel/<ID>/ (kam presmeruje aj prehliadač)
   if (!id) {
     const sid = fbIdFromShare(html);
-    log("rvp: FB share odkaz -> ID videa:", sid ?? "NENAJDENE");
+    log("rvp: FB share odkaz -> ID videa:", sid ?? "ziadne");
     if (sid) return await resolveFB(`https://www.facebook.com/reel/${sid}/`);
+    // bez ID videa to je obyčajná stránka/príspevok – video tam nehľadáme
+    if (!loginWall) throw permanent("FB: odkaz nie je video (stránka alebo príspevok)");
   }
 
   // iné varianty tej istej stránky – FB niekedy pri jednej z nich neposkytne dáta
   if (id) {
     log("rvp: FB hlavna stranka nic nedala, skusam alternativne URL pre ID " + id);
+    // plugins/video.php v logoch vždy uspel, ostatné varianty nikdy -> skúšaj ho prvý, ostatné len ak zlyhá
     const alts = [
+      `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent("https://www.facebook.com/watch/?v=" + id)}&show_text=false`,
       `https://www.facebook.com/watch/?v=${id}`,
       `https://www.facebook.com/video.php?v=${id}`,
-      `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent("https://www.facebook.com/watch/?v=" + id)}&show_text=false`,
     ].filter((u) => u !== first);
-    const o = await firstOk(
-      alts.map(async (u) => {
+    let o = null;
+    for (const u of alts) {
+      try {
         const h = await (await fetch(u, FB_FETCH)).text();
         if (LOGIN_RE.test(h)) loginWall = true;
         log("rvp: FB alternativa:", u, "(" + h.length + " B)");
-        return parseFB(h, id, "alternativa");
-      })
-    );
+        o = parseFB(h, id, "alternativa");
+        if (o) break;
+      } catch (e) { log("rvp: FB alternativa zlyhala:", u, e?.message ?? e); }
+    }
     if (o) return o;
   }
   throw new Error(loginWall ? "FB: vyžaduje login" : "FB: žiadne mp4 ani DASH");
@@ -520,6 +518,7 @@ export function resolve(link, kind) {
   };
   const p = run(1)
     .catch((e) => {
+      if (e?.permanent) throw e;
       log(tag, "pokus 1 zlyhal:", e?.message ?? e, "-> opakujem o 0.8 s");
       return new Promise((res) => setTimeout(res, 800)).then(() => run(2));
     })
@@ -537,7 +536,7 @@ export function resolve(link, kind) {
     })
     .catch((e) => {
       log(tag, "NENAJDENE po " + (Date.now() - t0) + " ms, dovod:", e?.message ?? e, "| link:", link);
-      cache.set(link, { exp: Date.now() + NEG_TTL, data: null });
+      cache.set(link, { exp: Date.now() + (e?.permanent ? TTL : NEG_TTL), data: null });
       return null;
     })
     .finally(() => pending.delete(link));
