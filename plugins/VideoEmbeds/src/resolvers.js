@@ -4,6 +4,52 @@ import { log, UA_DESKTOP, TTL, NEG_TTL, unesc, jsonAfter, jsonAll, shortcodeToId
 export const cache = new Map();   // link -> { exp, data }  (data = null pri zlyhaní)
 const pending = new Map(); // link -> Promise
 
+// ---------------------------------------------------------------- trvalá cache (prežije reštart appky)
+// Ukladá sa do vendetta.plugin.storage (súbor pluginu). Adresy videí z FB/IG sú podpísané a expirujú:
+// čas vypršania je v parametri oe= (hex unixová časová značka), podľa neho sa nastaví platnosť záznamu.
+const MAX_SAVED = 150;
+const store = () => { try { return vendetta?.plugin?.storage ?? null; } catch { return null; } };
+
+function expFor(url, kind) {
+  const m = String(url).match(/[?&]oe=([0-9a-f]{8})\b/i);
+  const oe = m ? parseInt(m[1], 16) * 1000 : 0;
+  if (oe > Date.now() + 15 * 60 * 1000) return oe - 10 * 60 * 1000;   // rezerva 10 min pred vypršaním
+  return Date.now() + (kind === "tw" ? 6 * 60 * 60 * 1000 : TTL);      // X adresy sú stabilné, ostatné krátko
+}
+
+let saveTimer;
+function persistSoon() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const st = store();
+    if (!st) return;
+    try {
+      const now = Date.now();
+      const items = [...cache]
+        .filter(([, v]) => v.data && v.exp > now)
+        .sort((a, b) => b[1].exp - a[1].exp)
+        .slice(0, MAX_SAVED);
+      const out = {};
+      for (const [k, v] of items) out[k] = { exp: v.exp, data: v.data };
+      st.vcache = out;
+    } catch (e) { log("rvp: ulozenie cache zlyhalo:", e?.message ?? e); }
+  }, 1000);
+}
+
+// zavolať v onLoad: načíta uložené (ešte platné) záznamy
+export function loadCache() {
+  const st = store();
+  if (!st) { log("rvp: trvale ulozisko nie je dostupne (cache len v pamati)"); return; }
+  try {
+    const now = Date.now();
+    let ok = 0, old = 0;
+    for (const [k, v] of Object.entries(st.vcache ?? {})) {
+      if (v?.data?.url && v.exp > now) { cache.set(k, { exp: v.exp, data: v.data }); ok++; } else old++;
+    }
+    log("rvp: ulozisko: nacitanych " + ok + " platnych zaznamov (" + old + " expirovanych vynechanych)");
+  } catch (e) { log("rvp: nacitanie cache zlyhalo:", e?.message ?? e); }
+}
+
 // ---------------------------------------------------------------- resolvers
 const HDRS = {
   "User-Agent": UA_DESKTOP,
@@ -531,7 +577,8 @@ export function resolve(link, kind) {
       }
       log(tag, "NAJDENE za " + (Date.now() - t0) + " ms, rozmery " + d.w + "x" + d.h + (d.note ? ", poznamka: " + d.note : ""));
       log(tag, "VIDEO URL:", d.url);
-      cache.set(link, { exp: Date.now() + TTL, data: d });
+      cache.set(link, { exp: expFor(d.url, kind), data: d });
+      persistSoon();
       return d;
     })
     .catch((e) => {
@@ -545,6 +592,7 @@ export function resolve(link, kind) {
 }
 
 export function clearCache() {
+  clearTimeout(saveTimer);   // aby oneskorený zápis neprepísal uložené dáta prázdnou cache
   cache.clear();
   pending.clear();
 }

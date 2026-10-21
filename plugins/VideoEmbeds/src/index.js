@@ -1,7 +1,7 @@
 // index.js – napojenie na Discord: pri správe s videolinkom pridá video prílohu (prehrávač).
 // Jednoduchý tok podľa pôvodnej fungujúcej verzie: nájdi video -> jeden MESSAGE_UPDATE.
 import { log, FB_RE, IG_RE, TW_RE, MARK } from "./helpers.js";
-import { resolve, cache, clearCache } from "./resolvers.js";
+import { resolve, cache, clearCache, loadCache } from "./resolvers.js";
 
 const { patcher, metro } = vendetta;
 const FluxDispatcher =
@@ -167,6 +167,7 @@ export default {
   onLoad() {
     if (PROBE) setTimeout(probeUI, 3000);
     log("rvp: plugin nacitany");
+    loadCache();   // uložené nájdené videá z predošlých spustení
     // po štarte: aktuálny kanál (store sa môže plniť postupne)
     for (const t of [500, 3000]) setTimeout(() => scanChannel(SelectedChannelStore?.getChannelId?.()), t);
     unpatch = patcher.before("dispatch", FluxDispatcher, (args) => {
