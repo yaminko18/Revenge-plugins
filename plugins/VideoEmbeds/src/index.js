@@ -139,9 +139,33 @@ function scanChannel(channelId) {
   } catch (e) { log("scan error", e); }
 }
 
+// ---- SONDA (dočasná): zistí, ktoré komponenty kreslia riadok správy, aby sa dalo pridať video až pri vykreslení.
+// Po zistení ju odstránime.
+const PROBE = true;
+function probeUI() {
+  const t = (f) => { try { return f(); } catch (e) { return "chyba: " + (e?.message ?? e); } };
+  const show = (name, m) => {
+    if (!m) return log("rvp: SONDA", name, "-> nenajdene");
+    const keys = t(() => Object.keys(m).slice(0, 12).join(","));
+    log("rvp: SONDA", name, "-> NAJDENE | typ:", typeof m, "| default:", typeof m?.default, "| kluce:", keys);
+  };
+  for (const n of ["Message", "ChatMessage", "MessageContent", "MessageAccessories", "MessageRow",
+                   "MessageAttachments", "Attachment", "MessagesList", "ChannelMessages"]) {
+    show("name:" + n, t(() => metro.findByName?.(n, false)));
+  }
+  for (const props of [["renderMessage"], ["MessageAccessories"], ["MessageContent"], ["renderAttachments"],
+                       ["onViewableItemsChanged"], ["renderRow"]]) {
+    show("props:" + props.join("+"), t(() => metro.findByProps?.(...props)));
+  }
+  for (const n of ["Message", "ChatMessage", "MessageContent", "MessageAccessories"]) {
+    show("displayName:" + n, t(() => metro.findByDisplayName?.(n, false)));
+  }
+}
+
 let unpatch;
 export default {
   onLoad() {
+    if (PROBE) setTimeout(probeUI, 3000);
     log("rvp: plugin nacitany");
     // po štarte: aktuálny kanál (store sa môže plniť postupne)
     for (const t of [500, 3000]) setTimeout(() => scanChannel(SelectedChannelStore?.getChannelId?.()), t);
