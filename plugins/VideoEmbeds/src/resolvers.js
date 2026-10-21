@@ -65,7 +65,17 @@ function fbIdFromShare(html) {
     const id = m && fbId(m[1]);
     if (id) return id;
   }
-  return null;
+  // og:url / canonical nemusia mať ID (napr. share/v/...): vezmi najčastejšie ID videa v dátach stránky
+  const counts = new Map();
+  for (const re of [/"video_id":"(\d{10,})"/g, /"videoId":"(\d{10,})"/g, /\\?\/(?:reel|videos)\\?\/(\d{10,})/g]) {
+    let m;
+    while ((m = re.exec(html))) counts.set(m[1], (counts.get(m[1]) || 0) + 1);
+  }
+  const top = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  log("rvp: FB share: og:url/canonical bez ID; ID z dat stranky:",
+    top.length ? top.map(([id, n]) => id + " (" + n + "x)").join(", ") : "ZIADNE",
+    "| <title>:", html.match(/<title[^>]*>([^<]{0,80})/i)?.[1] ?? "(ziadny)");
+  return top[0]?.[0] ?? null;
 }
 
 // yt-dlp: reel -> watch/?v=ID&_rdr, m.facebook.com -> www.facebook.com
