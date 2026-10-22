@@ -174,8 +174,9 @@ function dashVideoOnly(html, anchors = []) {
 }
 
 // returns { url, w, h, note? } or null; `id` = video ID from the link (if known)
-// Thumbnail of the video: the nearest known thumbnail field to the video position, else og:image of the page
-function fbThumb(html, idx) {
+// Thumbnail of the video. yt-dlp takes it from the media object whose id equals the video ID, which can sit far from the
+// video URL in the page, so a candidate is measured against both the video URL position and the video ID positions.
+function fbThumb(html, idx, anchors = []) {
   const res = [
     /"preferred_thumbnail":\s*\{"image":\s*\{"uri":"([^"]+)"/g,
     /"thumbnailImage":\s*\{"uri":"([^"]+)"/g,
@@ -183,26 +184,29 @@ function fbThumb(html, idx) {
     /"(?:previewImage|preview_image|poster_image|first_frame_thumbnail)":\s*\{"uri":"([^"]+)"/g,
     /"(?:thumbnail_src|thumbnailUrl|thumbnail_url|poster)":\s*"(https?:[^"]+)"/g,
   ];
-  let best = null;
+  const cands = [];
   for (const re of res) {
     let m;
     while ((m = re.exec(html))) {
-      const d = Math.abs(m.index - idx);
-      if (!best || d < best.d) best = { u: unesc(m[1]), d };
+      const d = Math.min(idx >= 0 ? Math.abs(m.index - idx) : Infinity, anchors.length ? distTo(anchors, m.index) : Infinity);
+      cands.push({ u: unesc(m[1]), d });
     }
   }
-  if (best && (idx < 0 || best.d <= 8000)) return best.u;
+  const best = cands.reduce((p, c) => (!p || c.d < p.d ? c : p), null);
+  if (best && ((idx < 0 && !anchors.length) || best.d <= 30000)) return best.u;
   const og =
     html.match(/<meta[^>]+(?:property|name)="(?:og|twitter):image(?::secure_url)?"[^>]+content="([^"]+)"/i) ||
     html.match(/<meta[^>]+content="([^"]+)"[^>]+(?:property|name)="(?:og|twitter):image"/i);
   if (og) return og[1].replace(/&amp;/g, "&");
-  // nothing found: log which thumbnail-like keys the page has, so the search can be fixed
+  // nothing found: log what the page has, so the search can be fixed
   try {
     const keys = new Map();
     const kr = /"([A-Za-z_]*(?:thumb|poster|preview)[A-Za-z_]*)":\s*(\{[^{}]{0,120}|"[^"]{0,100})/gi;
     let k;
     while ((k = kr.exec(html)) && keys.size < 12) if (!keys.has(k[1])) keys.set(k[1], k[2].slice(0, 90));
-    log("rvp: FB thumbnail keys in page:", keys.size ? JSON.stringify([...keys]) : "none", "| best distance:", best ? best.d : "-");
+    log("rvp: FB thumbnail: no match | candidates=" + cands.length + ", closest distance=" + (best ? best.d : "-") +
+      ", ID anchors=" + anchors.length + ", page size=" + html.length + " B");
+    log("rvp: FB thumbnail keys in page:", keys.size ? JSON.stringify([...keys]) : "none");
   } catch {}
   return null;
 }
@@ -247,14 +251,14 @@ function parseFB(html, id, where = "main page") {
       ", selected=" + FB_SRC[pick.rank] + ", " +
       (anchors.length ? "distance from ID=" + distTo(anchors, pick.idx) : "NO ID anchor -> taking the first match (risk of a different video)") +
       ", dimensions=" + (d ? d.w + "x" + d.h : "?"));
-    const thumb = fbThumb(html, pick.idx);
+    const thumb = fbThumb(html, pick.idx, anchors);
     log("rvp: FB thumbnail:", thumb ?? "none found");
     return { url: pick.url, w: d?.w || 0, h: d?.h || 0, thumb };
   }
   log("rvp: FB parse [" + where + "]: no progressive candidates, trying DASH (ID anchors=" + anchors.length + ")");
   const dash = dashVideoOnly(html, anchors);
   if (!dash) return null;
-  const thumb = fbThumb(html, anchors[0] ?? -1);
+  const thumb = fbThumb(html, -1, anchors);
   log("rvp: FB thumbnail:", thumb ?? "none found");
   return { ...dash, thumb, note: "FB: DASH only, video without audio" };
 }
