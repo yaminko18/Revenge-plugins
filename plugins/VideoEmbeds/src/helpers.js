@@ -13,6 +13,9 @@ export const UA_DESKTOP =
 export const TTL = 20 * 60 * 1000; // signed URLs expire, don't cache for long
 export const NEG_TTL = 10 * 1000;  // remember a failure only briefly so it can be retried
 export const MARK = "rvp-";
+// true: show the video as a video embed with a thumbnail (falls back to a plain video attachment when no thumbnail is known)
+// false: always use the old fake video attachment (no thumbnail)
+export const EMBED_MODE = true;
 export const isMine = (a) => String(a?.id ?? "").startsWith(MARK);
 
 export const unesc = (s) => {
