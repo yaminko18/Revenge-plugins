@@ -30,7 +30,11 @@ const makeEmbed = (msgId, link, d) => ({
 
 // Returns the message fields to change: a video embed when we have a thumbnail, otherwise the plain video attachment
 function videoFields(msgId, link, d, atts, embs) {
-  if (EMBED_MODE && d.thumb) return { embeds: [...embs, makeEmbed(msgId, link, d)] };
+  if (EMBED_MODE && d.thumb) {
+    log("rvp:   OUTPUT: embed with thumbnail:", d.thumb);
+    return { embeds: [...embs, makeEmbed(msgId, link, d)] };
+  }
+  log("rvp:   OUTPUT: plain attachment (EMBED_MODE=" + EMBED_MODE + ", thumbnail=" + (d.thumb ?? "none") + ")");
   return { attachments: [...atts, makeAtt(msgId, d)] };
 }
 

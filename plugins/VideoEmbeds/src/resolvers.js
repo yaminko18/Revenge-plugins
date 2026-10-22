@@ -44,9 +44,11 @@ export function loadCache() {
     const now = Date.now();
     let ok = 0, old = 0;
     for (const [k, v] of Object.entries(st.vcache ?? {})) {
-      if (v?.data?.url && v.exp > now) { cache.set(k, { exp: v.exp, data: v.data }); ok++; } else old++;
+      if (v?.data?.url && "thumb" in v.data && v.exp > now) {   // entries saved before thumbnails existed have no "thumb" key -> look them up again
+        cache.set(k, { exp: v.exp, data: v.data }); ok++;
+      } else old++;
     }
-    log("rvp: storage: loaded " + ok + " valid entries (" + old + " expired skipped)");
+    log("rvp: storage: loaded " + ok + " valid entries (" + old + " expired or without thumbnail skipped)");
   } catch (e) { log("rvp: loading cache failed:", e?.message ?? e); }
 }
 
@@ -328,6 +330,11 @@ function igVideoOf(media) {
 }
 
 // Thumbnail URL of an Instagram media object (largest still image)
+const ogImage = (html) => {
+  const m = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i) ||
+            html.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:image"/i);
+  return m ? m[1].replace(/&amp;/g, "&") : null;
+};
 const igThumb = (o) => o?.image_versions2?.candidates?.[0]?.url || o?.display_url || o?.thumbnail_src || null;
 
 async function resolveIG(url) {
@@ -346,6 +353,7 @@ async function resolveIG(url) {
     if (!Array.isArray(vs)) return null;
     const best = vs.filter((v) => v?.url).sort((a, b) => (b.height || 0) - (a.height || 0))[0];
     if (!best) return null;
+    log("rvp: IG thumbnail:", thumb || "none");
     return { url: best.url, w: best.width || fallback?.w || 0, h: best.height || fallback?.h || 0, thumb: thumb || null };
   };
 
@@ -361,7 +369,7 @@ async function resolveIG(url) {
       if (media) {
         const v = igVideoOf(media);
         if (v) {
-          const hit = fromVersions(v.video_versions, { w: v.original_width, h: v.original_height }, igThumb(v) || igThumb(media));
+          const hit = fromVersions(v.video_versions, { w: v.original_width, h: v.original_height }, igThumb(v) || igThumb(media) || ogImage(html));
           if (hit) return hit;
         } else {
           notVideo = true; // the post is an image
@@ -369,7 +377,7 @@ async function resolveIG(url) {
       } else if (/\/(?:reels?|tv)\//.test(u)) {
         // structure not found, but reel/tv is always a video
         const od = html.match(/"original_width":(\d+),"original_height":(\d+)/);
-        const hit = fromVersions(jsonAfter(html, "video_versions"), od && { w: +od[1], h: +od[2] }, jsonAfter(html, "image_versions2")?.candidates?.[0]?.url);
+        const hit = fromVersions(jsonAfter(html, "video_versions"), od && { w: +od[1], h: +od[2] }, jsonAfter(html, "image_versions2")?.candidates?.[0]?.url || ogImage(html));
         if (hit) return hit;
       }
     }
@@ -396,7 +404,7 @@ async function resolveIG(url) {
       }
       const tm = html.match(/(?:display_url|thumbnail_src)\\*":\\*"(https:[^"]*)"/);
       const thumb = tm ? tm[1].replace(/\\+$/, "").replace(/\\+u0026/g, "&").replace(/\\+\//g, "/") : null;
-      return { url: v, w, h, thumb };
+      return { url: v, w, h, thumb: thumb || ogImage(html) };
     } catch (e) { log("IG embed failed", e); }
   }
 
