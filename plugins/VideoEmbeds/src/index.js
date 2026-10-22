@@ -1,6 +1,6 @@
 // index.js – Discord hook: when a message contains a video link, attach a video (player) to it.
 // Simple flow based on the original working version: find video -> a single MESSAGE_UPDATE.
-import { log, FB_RE, IG_RE, TW_RE, MARK, EMBED_MODE } from "./helpers.js";
+import { log, FB_RE, IG_RE, TW_RE, MARK } from "./helpers.js";
 import { resolve, cache, clearCache, loadCache } from "./resolvers.js";
 
 const { patcher, metro } = vendetta;
@@ -19,30 +19,11 @@ const makeAtt = (msgId, d) => ({
   size: 0,
 });
 
-// Builds a fake video embed (with thumbnail) so Discord shows a preview image with the video
-const makeEmbed = (msgId, link, d) => ({
-  id: MARK + msgId,
-  type: "video",
-  url: link,
-  thumbnail: { url: d.thumb, proxy_url: d.thumb, width: d.w || 640, height: d.h || 360 },
-  video: { url: d.url, proxy_url: d.url, width: d.w || 640, height: d.h || 360 },
-});
-
-// Returns the message fields to change: a video embed when we have a thumbnail, otherwise the plain video attachment
-function videoFields(msgId, link, d, atts, embs) {
-  if (EMBED_MODE && d.thumb) {
-    log("rvp:   OUTPUT: embed with thumbnail:", d.thumb);
-    return { embeds: [...embs, makeEmbed(msgId, link, d)] };
-  }
-  log("rvp:   OUTPUT: plain attachment (EMBED_MODE=" + EMBED_MODE + ", thumbnail=" + (d.thumb ?? "none") + ")");
-  return { attachments: [...atts, makeAtt(msgId, d)] };
-}
-
-// True if the message already has our attachment/embed or any real video attachment
+// True if the message already has our attachment or any real video attachment
 const hasVideo = (msg) =>
   (msg.attachments ?? []).some(
     (a) => String(a.id).startsWith(MARK) || String(a.content_type ?? "").startsWith("video/")
-  ) || (msg.embeds ?? []).some((e) => String(e?.id ?? "").startsWith(MARK));
+  );
 
 // Finds the first supported link (Facebook / Instagram / X) in the message text
 function detect(content) {
@@ -66,7 +47,7 @@ function process(msg, src = "") {
   if (hit && Date.now() < hit.exp) {
     if (hit.data) {
       log("rvp:   from cache -> adding to payload (before render), URL:", hit.data.url);
-      Object.assign(msg, videoFields(msg.id, found.link, hit.data, msg.attachments ?? [], msg.embeds ?? []));
+      msg.attachments = [...(msg.attachments ?? []), makeAtt(msg.id, hit.data)];
     } else {
       log("rvp:   from cache: previously FAILED (will retry after the short negative cache expires)");
     }
@@ -74,7 +55,6 @@ function process(msg, src = "") {
   }
 
   const base = msg.attachments ?? [];
-  const baseEmbeds = msg.embeds ?? [];
   const channel_id = msg.channel_id;
   log("rvp:   not in cache -> looking for video");
   resolve(found.link, found.kind).then((d) => {
@@ -83,7 +63,7 @@ function process(msg, src = "") {
       log("rvp:   MESSAGE_UPDATE for message", msg.id, "| video URL:", d.url, "| dimensions:", d.w + "x" + d.h);
       FluxDispatcher.dispatch({
         type: "MESSAGE_UPDATE",
-        message: { id: msg.id, channel_id, ...videoFields(msg.id, found.link, d, base, baseEmbeds) },
+        message: { id: msg.id, channel_id, attachments: [...base, makeAtt(msg.id, d)] },
       });
     };
     if (load && isNewestLinked(msg.id, channel_id)) {
@@ -130,7 +110,7 @@ function attach(id, channel_id, link, d) {
   log("rvp:   MESSAGE_UPDATE (scan) for message", id, "| link:", link, "| video URL:", d.url, "| dimensions:", d.w + "x" + d.h);
   FluxDispatcher.dispatch({
     type: "MESSAGE_UPDATE",
-    message: { id, channel_id, ...videoFields(id, link, d, Array.from(cur.attachments ?? []), Array.from(cur.embeds ?? [])) },
+    message: { id, channel_id, attachments: [...Array.from(cur.attachments ?? []), makeAtt(id, d)] },
   });
 }
 

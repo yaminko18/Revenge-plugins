@@ -44,11 +44,9 @@ export function loadCache() {
     const now = Date.now();
     let ok = 0, old = 0;
     for (const [k, v] of Object.entries(st.vcache ?? {})) {
-      if (v?.data?.url && "thumb" in v.data && v.exp > now) {   // entries saved before thumbnails existed have no "thumb" key -> look them up again
-        cache.set(k, { exp: v.exp, data: v.data }); ok++;
-      } else old++;
+      if (v?.data?.url && v.exp > now) { cache.set(k, { exp: v.exp, data: v.data }); ok++; } else old++;
     }
-    log("rvp: storage: loaded " + ok + " valid entries (" + old + " expired or without thumbnail skipped)");
+    log("rvp: storage: loaded " + ok + " valid entries (" + old + " expired skipped)");
   } catch (e) { log("rvp: loading cache failed:", e?.message ?? e); }
 }
 
@@ -174,26 +172,6 @@ function dashVideoOnly(html, anchors = []) {
 }
 
 // returns { url, w, h, note? } or null; `id` = video ID from the link (if known)
-// Thumbnail of the video: the nearest known thumbnail field to the video position, else og:image of the page
-function fbThumb(html, idx) {
-  const res = [
-    /"preferred_thumbnail":\s*\{"image":\s*\{"uri":"([^"]+)"/g,
-    /"thumbnailImage":\s*\{"uri":"([^"]+)"/g,
-    /"thumbnail_image":\s*\{"uri":"([^"]+)"/g,
-  ];
-  let best = null;
-  for (const re of res) {
-    let m;
-    while ((m = re.exec(html))) {
-      const d = Math.abs(m.index - idx);
-      if (!best || d < best.d) best = { u: unesc(m[1]), d };
-    }
-  }
-  if (best && (idx < 0 || best.d <= 8000)) return best.u;
-  const og = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i);
-  return og ? og[1].replace(/&amp;/g, "&") : null;
-}
-
 const FB_SRC = ["progressive HD", "browser_native_hd_url", "playable_url_quality_hd", "progressive SD",
   "browser_native_sd_url", "playable_url", "hd_src", "sd_src"];
 function parseFB(html, id, where = "main page") {
@@ -234,16 +212,11 @@ function parseFB(html, id, where = "main page") {
       ", selected=" + FB_SRC[pick.rank] + ", " +
       (anchors.length ? "distance from ID=" + distTo(anchors, pick.idx) : "NO ID anchor -> taking the first match (risk of a different video)") +
       ", dimensions=" + (d ? d.w + "x" + d.h : "?"));
-    const thumb = fbThumb(html, pick.idx);
-    log("rvp: FB thumbnail:", thumb ?? "none found");
-    return { url: pick.url, w: d?.w || 0, h: d?.h || 0, thumb };
+    return { url: pick.url, w: d?.w || 0, h: d?.h || 0 };
   }
   log("rvp: FB parse [" + where + "]: no progressive candidates, trying DASH (ID anchors=" + anchors.length + ")");
   const dash = dashVideoOnly(html, anchors);
-  if (!dash) return null;
-  const thumb = fbThumb(html, anchors[0] ?? -1);
-  log("rvp: FB thumbnail:", thumb ?? "none found");
-  return { ...dash, thumb, note: "FB: DASH only, video without audio" };
+  return dash ? { ...dash, note: "FB: DASH only, video without audio" } : null;
 }
 
 async function resolveFB(url) {
@@ -329,14 +302,6 @@ function igVideoOf(media) {
   return slide ?? null;
 }
 
-// Thumbnail URL of an Instagram media object (largest still image)
-const ogImage = (html) => {
-  const m = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i) ||
-            html.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:image"/i);
-  return m ? m[1].replace(/&amp;/g, "&") : null;
-};
-const igThumb = (o) => o?.image_versions2?.candidates?.[0]?.url || o?.display_url || o?.thumbnail_src || null;
-
 async function resolveIG(url) {
   let u = url;
   if (/instagram\.com\/share\//.test(u)) {           // share links redirect to the real post
@@ -349,12 +314,11 @@ async function resolveIG(url) {
   if (!code) throw new Error("IG: invalid link");
   log("rvp: IG shortcode=" + code + ", type=" + (/\/(?:reels?|tv)\//.test(u) ? "reel/tv (always video)" : "post"));
 
-  const fromVersions = (vs, fallback, thumb) => {
+  const fromVersions = (vs, fallback) => {
     if (!Array.isArray(vs)) return null;
     const best = vs.filter((v) => v?.url).sort((a, b) => (b.height || 0) - (a.height || 0))[0];
     if (!best) return null;
-    log("rvp: IG thumbnail:", thumb || "none");
-    return { url: best.url, w: best.width || fallback?.w || 0, h: best.height || fallback?.h || 0, thumb: thumb || null };
+    return { url: best.url, w: best.width || fallback?.w || 0, h: best.height || fallback?.h || 0 };
   };
 
   // 1) main post page: find exactly the media with this shortcode (not "related" videos on the page)
@@ -369,7 +333,7 @@ async function resolveIG(url) {
       if (media) {
         const v = igVideoOf(media);
         if (v) {
-          const hit = fromVersions(v.video_versions, { w: v.original_width, h: v.original_height }, igThumb(v) || igThumb(media) || ogImage(html));
+          const hit = fromVersions(v.video_versions, { w: v.original_width, h: v.original_height });
           if (hit) return hit;
         } else {
           notVideo = true; // the post is an image
@@ -377,7 +341,7 @@ async function resolveIG(url) {
       } else if (/\/(?:reels?|tv)\//.test(u)) {
         // structure not found, but reel/tv is always a video
         const od = html.match(/"original_width":(\d+),"original_height":(\d+)/);
-        const hit = fromVersions(jsonAfter(html, "video_versions"), od && { w: +od[1], h: +od[2] }, jsonAfter(html, "image_versions2")?.candidates?.[0]?.url || ogImage(html));
+        const hit = fromVersions(jsonAfter(html, "video_versions"), od && { w: +od[1], h: +od[2] });
         if (hit) return hit;
       }
     }
@@ -402,9 +366,7 @@ async function resolveIG(url) {
         h = heightFirst ? a : b;
         w = heightFirst ? b : a;
       }
-      const tm = html.match(/(?:display_url|thumbnail_src)\\*":\\*"(https:[^"]*)"/);
-      const thumb = tm ? tm[1].replace(/\\+$/, "").replace(/\\+u0026/g, "&").replace(/\\+\//g, "/") : null;
-      return { url: v, w, h, thumb: thumb || ogImage(html) };
+      return { url: v, w, h };
     } catch (e) { log("IG embed failed", e); }
   }
 
@@ -422,7 +384,7 @@ async function resolveIG(url) {
   log("rvp: IG 3) web API: status=" + r.status);
   if (!r.ok) throw new Error("IG: login required (" + r.status + ")");
   const item = (await r.json()).items?.[0];
-  const hit = fromVersions(item?.video_versions, item && { w: item.original_width, h: item.original_height }, igThumb(item));
+  const hit = fromVersions(item?.video_versions, item && { w: item.original_width, h: item.original_height });
   if (!hit) throw new Error("IG: no video");
   return hit;
 }
@@ -563,8 +525,7 @@ function twPick(status, index) {
     w = +(oi?.width ?? lg?.w ?? 0) || 0;
     h = +(oi?.height ?? lg?.h ?? 0) || 0;
   }
-  const thumb = m.media_url_https || m.media_url || null;
-  return mp4 ? { url: best.url, w, h, thumb } : { url: best.url, w, h, thumb, note: "X: HLS only" };
+  return mp4 ? { url: best.url, w, h } : { url: best.url, w, h, note: "X: HLS only" };
 }
 
 async function resolveTW(url) {
@@ -616,7 +577,6 @@ export function resolve(link, kind) {
       }
       log(tag, "FOUND in " + (Date.now() - t0) + " ms, dimensions " + d.w + "x" + d.h + (d.note ? ", note: " + d.note : ""));
       log(tag, "VIDEO URL:", d.url);
-      log(tag, "THUMBNAIL:", d.thumb ?? "none");
       cache.set(link, { exp: expFor(d.url, kind), data: d });
       persistSoon();
       return d;
