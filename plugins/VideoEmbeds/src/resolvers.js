@@ -180,6 +180,8 @@ function fbThumb(html, idx) {
     /"preferred_thumbnail":\s*\{"image":\s*\{"uri":"([^"]+)"/g,
     /"thumbnailImage":\s*\{"uri":"([^"]+)"/g,
     /"thumbnail_image":\s*\{"uri":"([^"]+)"/g,
+    /"(?:previewImage|preview_image|poster_image|first_frame_thumbnail)":\s*\{"uri":"([^"]+)"/g,
+    /"(?:thumbnail_src|thumbnailUrl|thumbnail_url|poster)":\s*"(https?:[^"]+)"/g,
   ];
   let best = null;
   for (const re of res) {
@@ -190,8 +192,19 @@ function fbThumb(html, idx) {
     }
   }
   if (best && (idx < 0 || best.d <= 8000)) return best.u;
-  const og = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i);
-  return og ? og[1].replace(/&amp;/g, "&") : null;
+  const og =
+    html.match(/<meta[^>]+(?:property|name)="(?:og|twitter):image(?::secure_url)?"[^>]+content="([^"]+)"/i) ||
+    html.match(/<meta[^>]+content="([^"]+)"[^>]+(?:property|name)="(?:og|twitter):image"/i);
+  if (og) return og[1].replace(/&amp;/g, "&");
+  // nothing found: log which thumbnail-like keys the page has, so the search can be fixed
+  try {
+    const keys = new Map();
+    const kr = /"([A-Za-z_]*(?:thumb|poster|preview)[A-Za-z_]*)":\s*(\{[^{}]{0,120}|"[^"]{0,100})/gi;
+    let k;
+    while ((k = kr.exec(html)) && keys.size < 12) if (!keys.has(k[1])) keys.set(k[1], k[2].slice(0, 90));
+    log("rvp: FB thumbnail keys in page:", keys.size ? JSON.stringify([...keys]) : "none", "| best distance:", best ? best.d : "-");
+  } catch {}
+  return null;
 }
 
 const FB_SRC = ["progressive HD", "browser_native_hd_url", "playable_url_quality_hd", "progressive SD",
