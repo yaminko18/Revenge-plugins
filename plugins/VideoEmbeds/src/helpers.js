@@ -18,7 +18,7 @@ export const MARK = "rvp-";
 export const EMBED_MODE = true;
 // A live-updated embed sometimes shows only the thumbnail (not playable) until the message is re-rendered.
 // After the first update we send a second one with a new embed id after this many ms, so the client rebuilds the embed (0 = off).
-export const EMBED_REFRESH_MS = 500;
+export const EMBED_REFRESH_MS = 0;
 export const isMine = (a) => String(a?.id ?? "").startsWith(MARK);
 
 export const unesc = (s) => {
