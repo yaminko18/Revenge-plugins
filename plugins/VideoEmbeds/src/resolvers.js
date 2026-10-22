@@ -1,20 +1,20 @@
-// resolvers.js – Facebook, Instagram, X/Twitter + cache a resolve()
+// resolvers.js – Facebook, Instagram, X/Twitter + cache and resolve()
 import { log, UA_DESKTOP, TTL, NEG_TTL, unesc, jsonAfter, jsonAll, shortcodeToId, probeDims } from "./helpers.js";
 
-export const cache = new Map();   // link -> { exp, data }  (data = null pri zlyhaní)
+export const cache = new Map();   // link -> { exp, data }  (data = null on failure)
 const pending = new Map(); // link -> Promise
 
-// ---------------------------------------------------------------- trvalá cache (prežije reštart appky)
-// Ukladá sa do vendetta.plugin.storage (súbor pluginu). Adresy videí z FB/IG sú podpísané a expirujú:
-// čas vypršania je v parametri oe= (hex unixová časová značka), podľa neho sa nastaví platnosť záznamu.
+// ---------------------------------------------------------------- persistent cache (survives app restart)
+// Stored in vendetta.plugin.storage (plugin file). FB/IG video URLs are signed and expire:
+// the expiry time is in the oe= parameter (hex unix timestamp), which sets the entry's validity.
 const MAX_SAVED = 150;
 const store = () => { try { return vendetta?.plugin?.storage ?? null; } catch { return null; } };
 
 function expFor(url, kind) {
   const m = String(url).match(/[?&]oe=([0-9a-f]{8})\b/i);
   const oe = m ? parseInt(m[1], 16) * 1000 : 0;
-  if (oe > Date.now() + 15 * 60 * 1000) return oe - 10 * 60 * 1000;   // rezerva 10 min pred vypršaním
-  return Date.now() + (kind === "tw" ? 6 * 60 * 60 * 1000 : TTL);      // X adresy sú stabilné, ostatné krátko
+  if (oe > Date.now() + 15 * 60 * 1000) return oe - 10 * 60 * 1000;   // 10 min safety margin before expiry
+  return Date.now() + (kind === "tw" ? 6 * 60 * 60 * 1000 : TTL);      // X URLs are stable, others are cached briefly
 }
 
 let saveTimer;
@@ -32,22 +32,22 @@ function persistSoon() {
       const out = {};
       for (const [k, v] of items) out[k] = { exp: v.exp, data: v.data };
       st.vcache = out;
-    } catch (e) { log("rvp: ulozenie cache zlyhalo:", e?.message ?? e); }
+    } catch (e) { log("rvp: saving cache failed:", e?.message ?? e); }
   }, 1000);
 }
 
-// zavolať v onLoad: načíta uložené (ešte platné) záznamy
+// call in onLoad: loads saved (still valid) entries
 export function loadCache() {
   const st = store();
-  if (!st) { log("rvp: trvale ulozisko nie je dostupne (cache len v pamati)"); return; }
+  if (!st) { log("rvp: persistent storage not available (cache in memory only)"); return; }
   try {
     const now = Date.now();
     let ok = 0, old = 0;
     for (const [k, v] of Object.entries(st.vcache ?? {})) {
       if (v?.data?.url && v.exp > now) { cache.set(k, { exp: v.exp, data: v.data }); ok++; } else old++;
     }
-    log("rvp: ulozisko: nacitanych " + ok + " platnych zaznamov (" + old + " expirovanych vynechanych)");
-  } catch (e) { log("rvp: nacitanie cache zlyhalo:", e?.message ?? e); }
+    log("rvp: storage: loaded " + ok + " valid entries (" + old + " expired skipped)");
+  } catch (e) { log("rvp: loading cache failed:", e?.message ?? e); }
 }
 
 // ---------------------------------------------------------------- resolvers
@@ -56,11 +56,11 @@ const HDRS = {
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9",
 };
-// FB: bez cookies (yt-dlp ich neposiela; cookies z predošlých požiadaviek môžu zmeniť, čo FB vráti)
+// FB: no cookies (yt-dlp doesn't send them; cookies from earlier requests can change what FB returns)
 const FB_FETCH = { headers: HDRS, credentials: "omit" };
 const LOGIN_RE = /id="login_form"|id="loginbutton"|You must log in to continue/;
 
-// Rozmery najbližšie k danému miestu v texte (aby sme nechytili rozmery iného objektu)
+// Dimensions closest to the given position in the text (so we don't pick up another object's dimensions)
 function nearDims(text, idx) {
   if (idx < 0) return null;
   const from = Math.max(0, idx - 4000);
@@ -98,10 +98,10 @@ const fbId = (u) =>
   u.match(/\/videos\/(?:[^\/?#]+\/)?(\d+)/)?.[1] ||
   null;
 
-// Chyba, ktorá sa nezopakuje (odkaz nie je video): bez opakovania a s dlhou pamäťou neúspechu
+// An error that won't go away on retry (the link is not a video): no retry, and the failure is remembered for a long time
 const permanent = (msg) => Object.assign(new Error(msg), { permanent: true });
 
-// Share odkaz (share/r/XYZ, share/v/XYZ) -> číselné ID videa zo stránky (og:url / canonical ukazuje na /reel/<ID>)
+// Share link (share/r/XYZ, share/v/XYZ) -> numeric video ID from the page (og:url / canonical points to /reel/<ID>)
 function fbIdFromShare(html) {
   const pats = [
     /<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i,
@@ -124,7 +124,7 @@ function normFB(url) {
   return url.replace("://m.facebook.com/", "://www.facebook.com/");
 }
 
-// pozície, kde sa v stránke vyskytuje ID videa ("123456...") – podľa nich vyberáme správne video
+// positions where the video ID ("123456...") occurs in the page – used to pick the right video
 function anchorsFor(html, id) {
   const out = [];
   if (!id) return out;
@@ -171,11 +171,11 @@ function dashVideoOnly(html, anchors = []) {
   return { url: pick.url, w: pick.w, h: pick.h };
 }
 
-// vráti { url, w, h, note? } alebo null; `id` = ID videa z odkazu (ak je známe)
+// returns { url, w, h, note? } or null; `id` = video ID from the link (if known)
 const FB_SRC = ["progressive HD", "browser_native_hd_url", "playable_url_quality_hd", "progressive SD",
   "browser_native_sd_url", "playable_url", "hd_src", "sd_src"];
-function parseFB(html, id, where = "hlavna stranka") {
-  const cands = []; // { url, idx, rank }  (nižší rank = lepšia kvalita)
+function parseFB(html, id, where = "main page") {
+  const cands = []; // { url, idx, rank }  (lower rank = better quality)
   const addStr = (key, rank) => {
     const re = new RegExp('"' + key + '":"([^"]+)"', "g");
     let m;
@@ -199,7 +199,7 @@ function parseFB(html, id, where = "hlavna stranka") {
   if (cands.length) {
     let pick;
     if (anchors.length) {
-      // najbližší nález k ID videa, potom najlepšia kvalita v jeho okolí (to isté video)
+      // closest match to the video ID, then the best quality around it (the same video)
       const nearest = cands.reduce((p, c) => (distTo(anchors, c.idx) < distTo(anchors, p.idx) ? c : p));
       pick = cands
         .filter((c) => Math.abs(c.idx - nearest.idx) <= 3000)
@@ -208,43 +208,43 @@ function parseFB(html, id, where = "hlavna stranka") {
       pick = cands.slice().sort((x, y) => x.rank - y.rank || x.idx - y.idx)[0];
     }
     const d = nearDims(html, pick.idx);
-    log("rvp: FB parse [" + where + "]: kandidatov=" + cands.length + ", kotvy ID=" + anchors.length +
-      ", vybrane=" + FB_SRC[pick.rank] + ", " +
-      (anchors.length ? "vzdialenost od ID=" + distTo(anchors, pick.idx) : "BEZ kotvy ID -> berie sa prvy nalez (riziko ineho videa)") +
-      ", rozmery=" + (d ? d.w + "x" + d.h : "?"));
+    log("rvp: FB parse [" + where + "]: candidates=" + cands.length + ", ID anchors=" + anchors.length +
+      ", selected=" + FB_SRC[pick.rank] + ", " +
+      (anchors.length ? "distance from ID=" + distTo(anchors, pick.idx) : "NO ID anchor -> taking the first match (risk of a different video)") +
+      ", dimensions=" + (d ? d.w + "x" + d.h : "?"));
     return { url: pick.url, w: d?.w || 0, h: d?.h || 0 };
   }
-  log("rvp: FB parse [" + where + "]: ziadne mp4 kandidaty, skusam DASH (kotvy ID=" + anchors.length + ")");
+  log("rvp: FB parse [" + where + "]: no progressive candidates, trying DASH (ID anchors=" + anchors.length + ")");
   const dash = dashVideoOnly(html, anchors);
-  return dash ? { ...dash, note: "FB: len DASH, video bez zvuku" } : null;
+  return dash ? { ...dash, note: "FB: DASH only, video without audio" } : null;
 }
 
 async function resolveFB(url) {
   const first = normFB(url);
-  log("rvp: FB stahujem stranku:", first);
+  log("rvp: FB fetching page:", first);
   const r = await fetch(first, FB_FETCH);
   const final = r.url || first;
   const html = await r.text();
   const id = fbId(final) || fbId(url);
   let loginWall = LOGIN_RE.test(html);
-  log("rvp: FB odpoved: status=" + r.status + ", konecna URL=" + final + ", ID videa=" + (id ?? "nezname") +
-    ", velkost=" + html.length + " B, login stena=" + loginWall);
+  log("rvp: FB response: status=" + r.status + ", final URL=" + final + ", video ID=" + (id ?? "unknown") +
+    ", size=" + html.length + " B, login wall=" + loginWall);
   const out = parseFB(html, id);
   if (out) return out;
 
-  // share odkaz: zisti číselné ID a spracuj ako facebook.com/reel/<ID>/ (kam presmeruje aj prehliadač)
+  // share link: get the numeric ID and process it as facebook.com/reel/<ID>/ (where a browser redirects too)
   if (!id) {
     const sid = fbIdFromShare(html);
-    log("rvp: FB share odkaz -> ID videa:", sid ?? "ziadne");
+    log("rvp: FB share link -> video ID:", sid ?? "none");
     if (sid) return await resolveFB(`https://www.facebook.com/reel/${sid}/`);
-    // bez ID videa to je obyčajná stránka/príspevok – video tam nehľadáme
-    if (!loginWall) throw permanent("FB: odkaz nie je video (stránka alebo príspevok)");
+    // without a video ID it's an ordinary page/post – we don't look for a video there
+    if (!loginWall) throw permanent("FB: link is not a video (page or post)");
   }
 
-  // iné varianty tej istej stránky – FB niekedy pri jednej z nich neposkytne dáta
+  // other variants of the same page – FB sometimes doesn't provide data for one of them
   if (id) {
-    log("rvp: FB hlavna stranka nic nedala, skusam alternativne URL pre ID " + id);
-    // plugins/video.php v logoch vždy uspel, ostatné varianty nikdy -> skúšaj ho prvý, ostatné len ak zlyhá
+    log("rvp: FB main page gave nothing, trying alternative URLs for ID " + id);
+    // plugins/video.php always succeeded in the logs, the other variants never did -> try it first, the rest only if it fails
     const alts = [
       `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent("https://www.facebook.com/watch/?v=" + id)}&show_text=false`,
       `https://www.facebook.com/watch/?v=${id}`,
@@ -255,14 +255,14 @@ async function resolveFB(url) {
       try {
         const h = await (await fetch(u, FB_FETCH)).text();
         if (LOGIN_RE.test(h)) loginWall = true;
-        log("rvp: FB alternativa:", u, "(" + h.length + " B)");
-        o = parseFB(h, id, "alternativa");
+        log("rvp: FB alternative:", u, "(" + h.length + " B)");
+        o = parseFB(h, id, "alternative");
         if (o) break;
-      } catch (e) { log("rvp: FB alternativa zlyhala:", u, e?.message ?? e); }
+      } catch (e) { log("rvp: FB alternative failed:", u, e?.message ?? e); }
     }
     if (o) return o;
   }
-  throw new Error(loginWall ? "FB: vyžaduje login" : "FB: žiadne mp4 ani DASH");
+  throw new Error(loginWall ? "FB: login required" : "FB: no progressive or DASH video");
 }
 
 // ---- Instagram
@@ -271,7 +271,7 @@ const isLoginRedirect = (u) => {
   catch { return false; }
 };
 
-// Nájde objekt média s daným shortcodom v <script ... data-sjs> JSON blokoch
+// Finds the media object with the given shortcode in <script ... data-sjs> JSON blocks
 function findIGMedia(html, code) {
   const codes = new Set([code]);
   if (code.length > 28) codes.add(code.slice(0, -28));
@@ -295,7 +295,7 @@ function findIGMedia(html, code) {
   return null;
 }
 
-// vráti objekt s video_versions (priamo alebo prvé video v karuseli), inak null
+// returns the object with video_versions (directly or the first video in a carousel), otherwise null
 function igVideoOf(media) {
   if (Array.isArray(media.video_versions) && media.video_versions.length) return media;
   const slide = (media.carousel_media ?? []).find((c) => Array.isArray(c?.video_versions) && c.video_versions.length);
@@ -304,15 +304,15 @@ function igVideoOf(media) {
 
 async function resolveIG(url) {
   let u = url;
-  if (/instagram\.com\/share\//.test(u)) {           // share linky presmerujú na pravý post
+  if (/instagram\.com\/share\//.test(u)) {           // share links redirect to the real post
     const r = await fetch(u, { headers: HDRS });
     u = r.url || u;
-    log("rvp: IG share link presmerovany na:", u);
+    log("rvp: IG share link redirected to:", u);
   }
-  if (/\/reels?\/audio\//.test(u)) throw new Error("IG: audio stránka");
+  if (/\/reels?\/audio\//.test(u)) throw new Error("IG: audio page");
   const code = u.match(/instagram\.com\/(?:[^\/?#]+\/)?(?:p|tv|reels?)\/([^\/?#&]+)/)?.[1];
-  if (!code) throw new Error("IG: neplatný link");
-  log("rvp: IG shortcode=" + code + ", typ=" + (/\/(?:reels?|tv)\//.test(u) ? "reel/tv (vzdy video)" : "post"));
+  if (!code) throw new Error("IG: invalid link");
+  log("rvp: IG shortcode=" + code + ", type=" + (/\/(?:reels?|tv)\//.test(u) ? "reel/tv (always video)" : "post"));
 
   const fromVersions = (vs, fallback) => {
     if (!Array.isArray(vs)) return null;
@@ -321,34 +321,34 @@ async function resolveIG(url) {
     return { url: best.url, w: best.width || fallback?.w || 0, h: best.height || fallback?.h || 0 };
   };
 
-  // 1) hlavná stránka postu: nájdi presne médium s týmto shortcodom (nie "súvisiace" videá na stránke)
+  // 1) main post page: find exactly the media with this shortcode (not "related" videos on the page)
   let notVideo = false;
   try {
     const r = await fetch(`https://www.instagram.com/p/${code}`, { headers: HDRS });
-    log("rvp: IG 1) stranka postu: status=" + r.status + ", konecna URL=" + r.url + ", login presmerovanie=" + isLoginRedirect(r.url));
+    log("rvp: IG 1) post page: status=" + r.status + ", final URL=" + r.url + ", login redirect=" + isLoginRedirect(r.url));
     if (!isLoginRedirect(r.url)) {
       const html = await r.text();
       const media = findIGMedia(html, code);
-      log("rvp: IG 1) objekt media s tymto shortcodom: " + (media ? "najdeny" : "NENAJDENY") + ", velkost=" + html.length + " B");
+      log("rvp: IG 1) media object with this shortcode: " + (media ? "found" : "NOT FOUND") + ", size=" + html.length + " B");
       if (media) {
         const v = igVideoOf(media);
         if (v) {
           const hit = fromVersions(v.video_versions, { w: v.original_width, h: v.original_height });
           if (hit) return hit;
         } else {
-          notVideo = true; // príspevok je obrázok
+          notVideo = true; // the post is an image
         }
       } else if (/\/(?:reels?|tv)\//.test(u)) {
-        // štruktúra sa nenašla, ale reel/tv je vždy video
+        // structure not found, but reel/tv is always a video
         const od = html.match(/"original_width":(\d+),"original_height":(\d+)/);
         const hit = fromVersions(jsonAfter(html, "video_versions"), od && { w: +od[1], h: +od[2] });
         if (hit) return hit;
       }
     }
-  } catch (e) { log("IG page zlyhal", e); }
-  if (notVideo) throw new Error("IG: príspevok nie je video");
+  } catch (e) { log("IG page failed", e); }
+  if (notVideo) throw new Error("IG: post is not a video");
 
-  // 2) embed stránka (yt-dlp ju už nepoužíva; môže, ale nemusí fungovať)
+  // 2) embed page (yt-dlp no longer uses it; may or may not work)
   for (const path of ["embed/captioned/", "embed/"]) {
     try {
       const html = await (await fetch(`https://www.instagram.com/p/${code}/${path}`, { headers: HDRS })).text();
@@ -367,10 +367,10 @@ async function resolveIG(url) {
         w = heightFirst ? b : a;
       }
       return { url: v, w, h };
-    } catch (e) { log("IG embed zlyhal", e); }
+    } catch (e) { log("IG embed failed", e); }
   }
 
-  // 3) web API (yt-dlp ho používa len s prihlásením – bez sessionid vráti login)
+  // 3) web API (yt-dlp uses it only when logged in – without a sessionid it returns a login page)
   const r = await fetch(`https://www.instagram.com/api/v1/media/${shortcodeToId(code)}/info/`, {
     headers: {
       "User-Agent": UA_DESKTOP,
@@ -382,14 +382,14 @@ async function resolveIG(url) {
     },
   });
   log("rvp: IG 3) web API: status=" + r.status);
-  if (!r.ok) throw new Error("IG: vyžaduje login (" + r.status + ")");
+  if (!r.ok) throw new Error("IG: login required (" + r.status + ")");
   const item = (await r.json()).items?.[0];
   const hit = fromVersions(item?.video_versions, item && { w: item.original_width, h: item.original_height });
-  if (!hit) throw new Error("IG: žiadne video");
+  if (!hit) throw new Error("IG: no video");
   return hit;
 }
 
-// ---- X / Twitter (port yt-dlp twitter.py: GraphQL TweetResultByRestId + fallback na syndication)
+// ---- X / Twitter (port yt-dlp twitter.py: GraphQL TweetResultByRestId + syndication fallback)
 const TW_AUTH = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 const TW_GQL = "https://x.com/i/api/graphql/2ICDjqPd81tulZcYrtpTuQ/TweetResultByRestId";
 
@@ -406,24 +406,24 @@ async function twGuestToken(force) {
     headers: { "User-Agent": UA_DESKTOP, Authorization: "Bearer " + TW_AUTH },
   });
   const j = await r.json().catch(() => null);
-  if (!j?.guest_token) throw new Error("X: guest token zlyhal (" + r.status + ")");
+  if (!j?.guest_token) throw new Error("X: guest token failed (" + r.status + ")");
   twGuest = { token: j.guest_token, exp: Date.now() + 30 * 60 * 1000 };
   return j.guest_token;
 }
 
-// GraphQL odpoveď -> "legacy" status (ako _graphql_to_legacy v yt-dlp)
+// GraphQL response -> "legacy" status (like _graphql_to_legacy in yt-dlp)
 function twGraphqlToStatus(data) {
   let res = data?.tweetResult?.result ?? {};
   const fatal = (msg) => Object.assign(new Error(msg), { fatal: true });
   if (res.tombstone) {
     const cause = String(res.tombstone?.text?.text ?? "").replace(/\. Learn more$/, "");
-    throw fatal("X: " + (cause || "tweet nedostupný"));
+    throw fatal("X: " + (cause || "tweet unavailable"));
   }
   if (res.__typename === "TweetUnavailable") {
     const reason = res.reason;
-    if (reason === "NsfwLoggedOut" || reason === "NsfwViewerHasNoStatedAge") throw fatal("X: NSFW tweet vyžaduje login");
-    if (reason === "Protected") throw fatal("X: chránený tweet");
-    throw fatal("X: " + (reason || "tweet nedostupný"));
+    if (reason === "NsfwLoggedOut" || reason === "NsfwViewerHasNoStatedAge") throw fatal("X: NSFW tweet requires login");
+    if (reason === "Protected") throw fatal("X: protected tweet");
+    throw fatal("X: " + (reason || "tweet unavailable"));
   }
   if (res.__typename === "TweetWithVisibilityResults") res = res.tweet ?? {};
   const st = { ...(res.legacy ?? {}) };
@@ -475,15 +475,15 @@ async function twGraphql(id) {
     const j = await r.json().catch(() => null);
     const errs = [...new Set((j?.errors ?? []).map((e) => e?.message).filter(Boolean))]
       .filter((m) => String(m).toLowerCase() !== "dependency: unspecified");
-    if ((r.status === 401 || r.status === 403) && attempt === 0) { lastErr = "HTTP " + r.status; continue; } // starý guest token
+    if ((r.status === 401 || r.status === 403) && attempt === 0) { lastErr = "HTTP " + r.status; continue; } // stale guest token
     if (errs.length) throw new Error("X API: " + errs.join(", "));
-    if (!j?.data) throw new Error("X: prázdna odpoveď (" + r.status + ")");
+    if (!j?.data) throw new Error("X: empty response (" + r.status + ")");
     return twGraphqlToStatus(j.data);
   }
   throw new Error("X: " + lastErr);
 }
 
-// Fallback: syndication endpoint (menej dát, ale bez tokenu)
+// Fallback: syndication endpoint (less data, but no token needed)
 async function twSyndication(id) {
   const token = ((Number(id) / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, "");
   const r = await fetch(`https://cdn.syndication.twimg.com/tweet-result?id=${id}&token=${token}`, {
@@ -491,7 +491,7 @@ async function twSyndication(id) {
   });
   if (!r.ok) throw new Error("X syndication: " + r.status);
   const st = await r.json().catch(() => null);
-  if (!st || (!st.mediaDetails && !st.quoted_tweet)) throw new Error("X syndication: prázdna odpoveď");
+  if (!st || (!st.mediaDetails && !st.quoted_tweet)) throw new Error("X syndication: empty response");
   return { extended_entities: { media: [...(st.mediaDetails ?? []), ...(st.quoted_tweet?.mediaDetails ?? [])] } };
 }
 
@@ -501,12 +501,12 @@ function twPick(status, index) {
   let m;
   if (index) {
     m = media[index - 1];
-    if (!m) throw new Error("X: video #" + index + " nie je dostupné");
-    if (m.type === "photo") throw new Error("X: médium #" + index + " nie je video");
+    if (!m) throw new Error("X: video #" + index + " is not available");
+    if (m.type === "photo") throw new Error("X: media #" + index + " is not a video");
   } else {
     m = media.find((x) => x?.type !== "photo");
   }
-  if (!m) throw new Error("X: tweet neobsahuje video");
+  if (!m) throw new Error("X: tweet contains no video");
 
   const vs = (m.video_info?.variants ?? []).filter((v) => v?.url);
   const mp4 = vs
@@ -514,7 +514,7 @@ function twPick(status, index) {
     .sort((a, b) => (b.bitrate ?? b.bit_rate ?? 0) - (a.bitrate ?? a.bit_rate ?? 0))[0];
   const hls = vs.find((v) => /\.m3u8/.test(v.url));
   const best = mp4 || hls;
-  if (!best) throw new Error("X: žiadne video formáty");
+  if (!best) throw new Error("X: no video formats");
 
   let w = 0, h = 0;
   const dm = best.url.match(/\/(\d+)x(\d+)\//);
@@ -525,64 +525,64 @@ function twPick(status, index) {
     w = +(oi?.width ?? lg?.w ?? 0) || 0;
     h = +(oi?.height ?? lg?.h ?? 0) || 0;
   }
-  return mp4 ? { url: best.url, w, h } : { url: best.url, w, h, note: "X: len HLS" };
+  return mp4 ? { url: best.url, w, h } : { url: best.url, w, h, note: "X: HLS only" };
 }
 
 async function resolveTW(url) {
   const p = twParse(url);
-  if (!p) throw new Error("X: neplatný link");
+  if (!p) throw new Error("X: invalid link");
   let status;
   log("rvp: X tweet ID=" + p.id + (p.index ? ", video #" + p.index : "") + " -> GraphQL");
   try {
     status = await twGraphql(p.id);
     log("rvp: X GraphQL OK");
   } catch (e) {
-    log("X graphql zlyhal", e?.message ?? e);
+    log("X graphql failed", e?.message ?? e);
     if (e?.fatal) throw e;
-    log("rvp: X -> skusam syndication");
+    log("rvp: X -> trying syndication");
     try { status = await twSyndication(p.id); log("rvp: X syndication OK"); }
-    catch (e2) { log("X syndication zlyhal", e2?.message ?? e2); throw e; }
+    catch (e2) { log("X syndication failed", e2?.message ?? e2); throw e; }
   }
   return twPick(status, p.index);
 }
 
-// ---- spoločné: cache (úspech 20 min, neúspech len krátko) + jeden opakovaný pokus
+// ---- shared: cache (success 20 min, failure only briefly) + one retry
 export function resolve(link, kind) {
   const hit = cache.get(link);
   if (hit && Date.now() < hit.exp) return Promise.resolve(hit.data);
   if (pending.has(link)) {
-    log("rvp: [" + kind + "] uz sa hlada, cakam na vysledok:", link);
+    log("rvp: [" + kind + "] already being resolved, waiting for the result:", link);
     return pending.get(link);
   }
 
   const t0 = Date.now();
   const tag = "rvp: [" + kind + "]";
-  log(tag, "START hladam video pre:", link);
+  log(tag, "START looking for video for:", link);
   const run = (n) => {
-    log(tag, "pokus " + n);
+    log(tag, "attempt " + n);
     return kind === "fb" ? resolveFB(link) : kind === "tw" ? resolveTW(link) : resolveIG(link);
   };
   const p = run(1)
     .catch((e) => {
       if (e?.permanent) throw e;
-      log(tag, "pokus 1 zlyhal:", e?.message ?? e, "-> opakujem o 0.8 s");
+      log(tag, "attempt 1 failed:", e?.message ?? e, "-> retrying in 0.8 s");
       return new Promise((res) => setTimeout(res, 800)).then(() => run(2));
     })
     .then(async (d) => {
-      // IG: rozmery vždy over z hlavičky videa; FB len keď chýbajú
+      // IG: always verify dimensions from the video header; FB only when missing
       if (kind === "ig" || !(d.w && d.h)) {
         const pr = await probeDims(d.url);
-        log(tag, "rozmery z hlavicky videa:", pr ? pr.w + "x" + pr.h : "nezistene (ostavaju " + d.w + "x" + d.h + ")");
+        log(tag, "dimensions from video header:", pr ? pr.w + "x" + pr.h : "unknown (keeping " + d.w + "x" + d.h + ")");
         if (pr) d = { ...d, w: pr.w, h: pr.h };
       }
-      log(tag, "NAJDENE za " + (Date.now() - t0) + " ms, rozmery " + d.w + "x" + d.h + (d.note ? ", poznamka: " + d.note : ""));
+      log(tag, "FOUND in " + (Date.now() - t0) + " ms, dimensions " + d.w + "x" + d.h + (d.note ? ", note: " + d.note : ""));
       log(tag, "VIDEO URL:", d.url);
       cache.set(link, { exp: expFor(d.url, kind), data: d });
       persistSoon();
       return d;
     })
     .catch((e) => {
-      log(tag, "NENAJDENE po " + (Date.now() - t0) + " ms, dovod:", e?.message ?? e, "| link:", link);
+      log(tag, "NOT FOUND after " + (Date.now() - t0) + " ms, reason:", e?.message ?? e, "| link:", link);
       cache.set(link, { exp: Date.now() + (e?.permanent ? TTL : NEG_TTL), data: null });
       return null;
     })
@@ -592,7 +592,7 @@ export function resolve(link, kind) {
 }
 
 export function clearCache() {
-  clearTimeout(saveTimer);   // aby oneskorený zápis neprepísal uložené dáta prázdnou cache
+  clearTimeout(saveTimer);   // so a delayed write doesn't overwrite saved data with an empty cache
   cache.clear();
   pending.clear();
 }

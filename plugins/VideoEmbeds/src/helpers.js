@@ -1,5 +1,5 @@
-// helpers.js – konfigurácia, malé pomôcky, čítanie rozmerov z mp4
-// logy idú cez console (Revenge ich zrkadlí do debuggera)
+// helpers.js – configuration, small utilities, reading video dimensions from the file header
+// logs go through console (Revenge mirrors them to the debugger)
 export const log = (...a) => { try { console.log(...a); } catch {} };
 
 // ---------------------------------------------------------------- config
@@ -10,8 +10,8 @@ export const TW_RE = /https?:\/\/(?:(?:www|m(?:obile)?)\.)?(?:twitter|x)\.com\/(
 
 export const UA_DESKTOP =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
-export const TTL = 20 * 60 * 1000; // podpísané URL expirujú, necachuj dlho
-export const NEG_TTL = 10 * 1000;  // neúspech zapamätaj len krátko, nech sa dá skúsiť znova
+export const TTL = 20 * 60 * 1000; // signed URLs expire, don't cache for long
+export const NEG_TTL = 10 * 1000;  // remember a failure only briefly so it can be retried
 export const MARK = "rvp-";
 export const isMine = (a) => String(a?.id ?? "").startsWith(MARK);
 
@@ -20,7 +20,7 @@ export const unesc = (s) => {
   catch { return s.replace(/\\u0026/g, "&").replace(/\\\//g, "/"); }
 };
 
-// Nájde `"key": [..]` alebo `"key": {..}` v texte a vráti naparsovaný JSON.
+// Finds `"key": [..]` or `"key": {..}` in the text and returns the parsed JSON.
 export function jsonAfter(text, key) {
   const i = text.indexOf('"' + key + '":');
   if (i < 0) return null;
@@ -42,7 +42,7 @@ export function jsonAfter(text, key) {
   return null;
 }
 
-// Všetky výskyty `"key": [..]` / `{..}` v texte: [{ idx, value }]
+// All occurrences of `"key": [..]` / `{..}` in the text: [{ idx, value }]
 export function jsonAll(text, key) {
   const out = [];
   const needle = '"' + key + '":';
@@ -72,9 +72,9 @@ export function jsonAll(text, key) {
   return out;
 }
 
-// shortcode -> desiatkové media id (rovnako ako _id_to_pk v yt-dlp), bez BigInt
+// shortcode -> decimal media id (same as _id_to_pk in yt-dlp), without BigInt
 export function shortcodeToId(code) {
-  if (code.length > 28) code = code.slice(0, -28); // "dlhé" shortcody majú 28 znakov navyše
+  if (code.length > 28) code = code.slice(0, -28); // "long" shortcodes have 28 extra characters
   const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   const digits = [0];
   for (const ch of code) {
@@ -89,7 +89,7 @@ export function shortcodeToId(code) {
   return digits.reverse().join("");
 }
 
-// ---------------------------------------------------------------- rozmery z mp4
+// ---------------------------------------------------------------- dimensions from the video header
 export const firstOk = (ps) =>
   new Promise((res) => {
     let n = ps.length;
@@ -117,19 +117,19 @@ function b64ToBytes(b64) {
   return out.subarray(0, o);
 }
 
-// Prečíta šírku/výšku video stopy z `tkhd` boxu (moov musí byť na začiatku súboru)
+// Reads the width/height of the video track from the `tkhd` box (moov must be at the start of the file)
 function mp4Dims(b) {
   const u32 = (p) => ((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) >>> 0;
   const i32 = (p) => (u32(p) | 0);
   for (let i = 4; i + 100 < b.length; i++) {
     if (b[i] === 0x74 && b[i + 1] === 0x6b && b[i + 2] === 0x68 && b[i + 3] === 0x64) { // "tkhd"
-      const v = i + 4;                       // začiatok version/flags
+      const v = i + 4;                       // start of version/flags
       const ver = b[v];
-      const m = v + (ver === 1 ? 52 : 40);   // matica
-      const wp = v + (ver === 1 ? 88 : 76);  // šírka (16.16)
+      const m = v + (ver === 1 ? 52 : 40);   // transformation matrix
+      const wp = v + (ver === 1 ? 88 : 76);  // width (16.16 fixed point)
       let w = u32(wp) >>> 16, h = u32(wp + 4) >>> 16;
-      if (!w || !h) continue;                // audio stopa
-      if (i32(m) === 0 && i32(m + 4) !== 0) [w, h] = [h, w]; // otočenie o 90/270°
+      if (!w || !h) continue;                // audio track
+      if (i32(m) === 0 && i32(m + 4) !== 0) [w, h] = [h, w]; // rotated by 90/270°
       return { w, h };
     }
   }
@@ -144,7 +144,7 @@ export async function probeDims(url) {
       headers: { "User-Agent": UA_DESKTOP, Range: "bytes=0-262143" },
       signal: ctrl?.signal,
     });
-    if (r.status !== 206) { ctrl?.abort(); return null; } // server Range ignoruje -> nesťahuj celé video
+    if (r.status !== 206) { ctrl?.abort(); return null; } // server ignores Range -> don't download the whole video
     const blob = await r.blob();
     const b64 = await new Promise((res, rej) => {
       const fr = new FileReader();
@@ -154,7 +154,7 @@ export async function probeDims(url) {
     });
     return mp4Dims(b64ToBytes(b64));
   } catch (e) {
-    log("probe zlyhal", e);
+    log("probe failed", e);
     return null;
   } finally {
     clearTimeout(timer);

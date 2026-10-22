@@ -1,5 +1,5 @@
-// index.js – napojenie na Discord: pri správe s videolinkom pridá video prílohu (prehrávač).
-// Jednoduchý tok podľa pôvodnej fungujúcej verzie: nájdi video -> jeden MESSAGE_UPDATE.
+// index.js – Discord hook: when a message contains a video link, attach a video (player) to it.
+// Simple flow based on the original working version: find video -> a single MESSAGE_UPDATE.
 import { log, FB_RE, IG_RE, TW_RE, MARK } from "./helpers.js";
 import { resolve, cache, clearCache, loadCache } from "./resolvers.js";
 
@@ -7,6 +7,7 @@ const { patcher, metro } = vendetta;
 const FluxDispatcher =
   metro.common?.FluxDispatcher ?? metro.findByProps("dispatch", "subscribe");
 
+// Builds a fake video attachment so Discord renders its native player
 const makeAtt = (msgId, d) => ({
   id: MARK + msgId,
   filename: "video.mp4",
@@ -18,11 +19,13 @@ const makeAtt = (msgId, d) => ({
   size: 0,
 });
 
+// True if the message already has our attachment or any real video attachment
 const hasVideo = (msg) =>
   (msg.attachments ?? []).some(
     (a) => String(a.id).startsWith(MARK) || String(a.content_type ?? "").startsWith("video/")
   );
 
+// Finds the first supported link (Facebook / Instagram / X) in the message text
 function detect(content) {
   let m;
   if ((m = content.match(FB_RE))) return { link: m[0], kind: "fb" };
@@ -31,7 +34,7 @@ function detect(content) {
   return null;
 }
 
-// upraví správu v payloade (cache) alebo po nájdení videa pošle MESSAGE_UPDATE
+// Modifies the message in the payload (cache hit) or dispatches MESSAGE_UPDATE once the video is found
 function process(msg, src = "") {
   const load = /^LOAD_MESSAGES/.test(src);
   if (!msg || typeof msg.content !== "string" || !msg.content || !msg.id) return;
@@ -39,39 +42,39 @@ function process(msg, src = "") {
   const found = detect(msg.content);
   if (!found) return;
 
-  log("rvp: SPRAVA", msg.id, "| zdroj:", src, "| typ:", found.kind, "| link:", found.link);
+  log("rvp: MESSAGE", msg.id, "| source:", src, "| type:", found.kind, "| link:", found.link);
   const hit = cache.get(found.link);
   if (hit && Date.now() < hit.exp) {
     if (hit.data) {
-      log("rvp:   z cache -> pridavam do payloadu (pred vykreslenim), URL:", hit.data.url);
+      log("rvp:   from cache -> adding to payload (before render), URL:", hit.data.url);
       msg.attachments = [...(msg.attachments ?? []), makeAtt(msg.id, hit.data)];
     } else {
-      log("rvp:   z cache: predtym ZLYHALO (zopakuje sa po vyprsani kratkej pamate)");
+      log("rvp:   from cache: previously FAILED (will retry after the short negative cache expires)");
     }
     return;
   }
 
   const base = msg.attachments ?? [];
   const channel_id = msg.channel_id;
-  log("rvp:   nie je v cache -> hladam video");
+  log("rvp:   not in cache -> looking for video");
   resolve(found.link, found.kind).then((d) => {
-    if (!d || !channel_id) { log("rvp:   sprava", msg.id, "ostava BEZ videa"); return; }
+    if (!d || !channel_id) { log("rvp:   message", msg.id, "stays WITHOUT video"); return; }
     const go = () => {
-      log("rvp:   MESSAGE_UPDATE pre sprava", msg.id, "| URL videa:", d.url, "| rozmery:", d.w + "x" + d.h);
+      log("rvp:   MESSAGE_UPDATE for message", msg.id, "| video URL:", d.url, "| dimensions:", d.w + "x" + d.h);
       FluxDispatcher.dispatch({
         type: "MESSAGE_UPDATE",
         message: { id: msg.id, channel_id, attachments: [...base, makeAtt(msg.id, d)] },
       });
     };
     if (load && isNewestLinked(msg.id, channel_id)) {
-      log("rvp:   najnovsia sprava s videom -> pridam o " + LAST_DELAY + " ms");
+      log("rvp:   newest message with a video -> adding after " + LAST_DELAY + " ms");
       setTimeout(go, LAST_DELAY);
     } else go();
   });
 }
 
-// Správy, ktoré sú už v MessageStore (návrat do kanála, kanál otvorený pri štarte appky),
-// neprejdú cez dispatch – Discord pre ne neposiela žiadnu udalosť. Prejdeme ich sami.
+// Messages already in MessageStore (returning to a channel, channel open at app start)
+// don't go through dispatch – Discord sends no event for them. We walk through them ourselves.
 const MessageStore = (() => {
   try { return metro.findByStoreName("MessageStore"); } catch { return null; }
 })();
@@ -79,8 +82,9 @@ const SelectedChannelStore = (() => {
   try { return metro.findByStoreName("SelectedChannelStore"); } catch { return null; }
 })();
 
-// Posledné (najnovšie) video v kanáli sa pridáva s malým oneskorením po ostatných.
+// The latest (newest) video in a channel is added with a small delay after the others.
 const LAST_DELAY = 800;
+// True if no newer message with a supported link exists in the channel (snowflake IDs compared by length, then lexically)
 function isNewestLinked(id, channel_id) {
   try {
     const col = MessageStore?.getMessages?.(channel_id);
@@ -94,22 +98,23 @@ function isNewestLinked(id, channel_id) {
 const attachSoon = (id, cid, link, d) =>
   isNewestLinked(id, cid) ? setTimeout(() => attach(id, cid, link, d), LAST_DELAY) : attach(id, cid, link, d);
 
-// Pridá video správe, ak je v store, nemá video a stále obsahuje ten istý odkaz. Jeden dispatch.
+// Adds the video to a message if it is in the store, has no video yet and still contains the same link. One dispatch.
 function attach(id, channel_id, link, d) {
   const cur = MessageStore?.getMessage?.(channel_id, id);
-  if (!cur) { log("rvp:   scan: sprava", id, "uz nie je v store, preskakujem"); return; }
-  if (hasVideo(cur)) return;   // uz ma prehravac
+  if (!cur) { log("rvp:   scan: message", id, "is no longer in the store, skipping"); return; }
+  if (hasVideo(cur)) return;   // already has a player
   if (typeof cur.content !== "string" || detect(cur.content)?.link !== link) {
-    log("rvp:   scan: sprava", id, "ma uz iny link/text, preskakujem");
+    log("rvp:   scan: message", id, "now has a different link/text, skipping");
     return;
   }
-  log("rvp:   MESSAGE_UPDATE (scan) pre sprava", id, "| link:", link, "| URL videa:", d.url, "| rozmery:", d.w + "x" + d.h);
+  log("rvp:   MESSAGE_UPDATE (scan) for message", id, "| link:", link, "| video URL:", d.url, "| dimensions:", d.w + "x" + d.h);
   FluxDispatcher.dispatch({
     type: "MESSAGE_UPDATE",
     message: { id, channel_id, attachments: [...Array.from(cur.attachments ?? []), makeAtt(id, d)] },
   });
 }
 
+// Goes through all messages of a channel already in the store and attaches videos where needed
 function scanChannel(channelId) {
   if (!channelId || !MessageStore?.getMessages) return;
   try {
@@ -122,32 +127,32 @@ function scanChannel(channelId) {
       if (!found) continue;
       todo++;
       const id = m.id, cid = m.channel_id ?? channelId;
-      log("rvp: SCAN sprava", id, "| typ:", found.kind, "| link:", found.link);
+      log("rvp: SCAN message", id, "| type:", found.kind, "| link:", found.link);
       const hit = cache.get(found.link);
       if (hit && Date.now() < hit.exp) {
-        if (hit.data) attach(id, cid, found.link, hit.data);   // hneď, pred vykreslením (bez neskorého skoku)
-        else log("rvp:   z cache: predtym ZLYHALO");
+        if (hit.data) attach(id, cid, found.link, hit.data);   // immediately, before render (no late jump)
+        else log("rvp:   from cache: previously FAILED");
         continue;
       }
-      log("rvp:   nie je v cache -> hladam video");
+      log("rvp:   not in cache -> looking for video");
       resolve(found.link, found.kind).then((d) => {
         if (d) attachSoon(id, cid, found.link, d);
-        else log("rvp:   sprava", id, "ostava BEZ videa");
+        else log("rvp:   message", id, "stays WITHOUT video");
       });
     }
-    if (todo) log("rvp: SCAN kanala " + channelId + ": " + todo + " sprav s videolinkom bez prehravaca (z " + arr.length + " v store)");
+    if (todo) log("rvp: SCAN of channel " + channelId + ": " + todo + " messages with a video link and no player (out of " + arr.length + " in store)");
   } catch (e) { log("scan error", e); }
 }
 
-// ---- SONDA (dočasná): zistí, ktoré komponenty kreslia riadok správy, aby sa dalo pridať video až pri vykreslení.
-// Po zistení ju odstránime.
+// ---- PROBE (temporary): finds out which components render a message row, so the video
+// could be added at render time. We'll remove it once we know.
 const PROBE = true;
 function probeUI() {
-  const t = (f) => { try { return f(); } catch (e) { return "chyba: " + (e?.message ?? e); } };
+  const t = (f) => { try { return f(); } catch (e) { return "error: " + (e?.message ?? e); } };
   const show = (name, m) => {
-    if (!m) return log("rvp: SONDA", name, "-> nenajdene");
+    if (!m) return log("rvp: PROBE", name, "-> not found");
     const keys = t(() => Object.keys(m).slice(0, 12).join(","));
-    log("rvp: SONDA", name, "-> NAJDENE | typ:", typeof m, "| default:", typeof m?.default, "| kluce:", keys);
+    log("rvp: PROBE", name, "-> FOUND | type:", typeof m, "| default:", typeof m?.default, "| keys:", keys);
   };
   for (const n of ["Message", "ChatMessage", "MessageContent", "MessageAccessories", "MessageRow",
                    "MessageAttachments", "Attachment", "MessagesList", "ChannelMessages"]) {
@@ -166,9 +171,9 @@ let unpatch;
 export default {
   onLoad() {
     if (PROBE) setTimeout(probeUI, 3000);
-    log("rvp: plugin nacitany");
-    loadCache();   // uložené nájdené videá z predošlých spustení
-    // po štarte: aktuálny kanál (store sa môže plniť postupne)
+    log("rvp: plugin loaded");
+    loadCache();   // videos found in previous runs, saved in storage
+    // after start: current channel (the store may fill up gradually)
     for (const t of [500, 3000]) setTimeout(() => scanChannel(SelectedChannelStore?.getChannelId?.()), t);
     unpatch = patcher.before("dispatch", FluxDispatcher, (args) => {
       const ev = args[0];
@@ -180,17 +185,17 @@ export default {
             process(ev.message, ev.type);
             break;
           case "LOAD_MESSAGES_SUCCESS":
-          case "LOAD_MESSAGES_SUCCESS_CACHED":   // kanál načítaný z cache (bez tohto sa správy nespracujú)
+          case "LOAD_MESSAGES_SUCCESS_CACHED":   // channel loaded from cache (without this the messages wouldn't be processed)
             ev.messages?.forEach((m) => process(m, ev.type));
             break;
           default:
-            // iné udalosti s načítanými správami (napr. načítanie okolo správy)
+            // other events carrying loaded messages (e.g. loading around a message)
             if (/^LOAD_MESSAGES/.test(ev.type) && Array.isArray(ev.messages))
               ev.messages.forEach((m) => process(m, ev.type));
             break;
           case "CHANNEL_SELECT":
-            // návrat do kanála: správy sú v store a nič sa nedispatchuje
-            scanChannel(ev.channelId);                       // hneď (cache -> pred vykreslením)
+            // returning to a channel: messages are already in the store and nothing is dispatched
+            scanChannel(ev.channelId);                       // immediately (cache -> before render)
             break;
         }
       } catch (e) { log("patch error", e); }
