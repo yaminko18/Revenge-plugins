@@ -16,6 +16,9 @@ export const MARK = "rvp-";
 // true: show the video as a video embed with a thumbnail (falls back to a plain video attachment when no thumbnail is known)
 // false: always use the old fake video attachment (no thumbnail)
 export const EMBED_MODE = true;
+// A live-updated embed sometimes shows only the thumbnail (not playable) until the message is re-rendered.
+// After the first update we send a second one with a new embed id after this many ms, so the client rebuilds the embed (0 = off).
+export const EMBED_REFRESH_MS = 500;
 export const isMine = (a) => String(a?.id ?? "").startsWith(MARK);
 
 export const unesc = (s) => {

@@ -1,6 +1,6 @@
 // index.js – Discord hook: when a message contains a video link, attach a video (player) to it.
 // Simple flow based on the original working version: find video -> a single MESSAGE_UPDATE.
-import { log, FB_RE, IG_RE, TW_RE, MARK, EMBED_MODE } from "./helpers.js";
+import { log, FB_RE, IG_RE, TW_RE, MARK, EMBED_MODE, EMBED_REFRESH_MS } from "./helpers.js";
 import { resolve, cache, clearCache, loadCache } from "./resolvers.js";
 
 const { patcher, metro } = vendetta;
@@ -20,8 +20,8 @@ const makeAtt = (msgId, d) => ({
 });
 
 // Builds a fake video embed (with thumbnail) so Discord shows a preview image with the video
-const makeEmbed = (msgId, link, d) => ({
-  id: MARK + msgId,
+const makeEmbed = (msgId, link, d, rev = 0) => ({
+  id: MARK + msgId + (rev ? "-" + rev : ""),
   type: "video",
   url: link,
   thumbnail: { url: d.thumb, proxy_url: d.thumb, width: d.w || 640, height: d.h || 360 },
@@ -29,10 +29,20 @@ const makeEmbed = (msgId, link, d) => ({
 });
 
 // Returns the message fields to change: a video embed when we have a thumbnail, otherwise the plain video attachment
+// Short key of a link ("reel/CODE", "status/123") so the same post matches across hosts, query strings and trailing slashes
+const linkKey = (u) =>
+  String(u ?? "").replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").slice(-2).join("/").toLowerCase();
+
 function videoFields(msgId, link, d, atts, embs) {
   if (EMBED_MODE && d.thumb) {
+    // Discord's own link preview for the same post (usually a thumbnail only, not playable) is replaced by our embed
+    const key = linkKey(link);
+    const mine = (e) => String(e?.id ?? "").startsWith(MARK);
+    const same = embs.filter((e) => !mine(e) && linkKey(e?.url) === key);
+    const keep = embs.filter((e) => !mine(e) && !same.includes(e));
+    log("rvp:   existing embeds:", JSON.stringify(embs.map((e) => [e?.type, e?.url])), "| replaced:", same.length);
     log("rvp:   OUTPUT: embed with thumbnail:", d.thumb);
-    return { embeds: [...embs, makeEmbed(msgId, link, d)] };
+    return { embeds: [...keep, makeEmbed(msgId, link, d)] };
   }
   log("rvp:   OUTPUT: plain attachment (EMBED_MODE=" + EMBED_MODE + ", thumbnail=" + (d.thumb ?? "none") + ")");
   return { attachments: [...atts, makeAtt(msgId, d)] };
@@ -51,6 +61,24 @@ function detect(content) {
   if ((m = content.match(IG_RE))) return { link: m[0], kind: "ig" };
   if ((m = content.match(TW_RE))) return { link: m[0], kind: "tw" };
   return null;
+}
+
+// Second update for a live-updated message: same embed under a new id, so the client rebuilds it
+// (an embed added after the message was rendered can stay a plain image; one present at first render is playable)
+function refreshEmbed(id, cid, link, d) {
+  if (!EMBED_MODE || !d.thumb || !EMBED_REFRESH_MS) return;
+  setTimeout(() => {
+    try {
+      const cur = MessageStore?.getMessage?.(cid, id);
+      if (!cur) return;
+      const others = Array.from(cur.embeds ?? []).filter((e) => !String(e?.id ?? "").startsWith(MARK));
+      log("rvp:   refresh embed for message", id);
+      FluxDispatcher.dispatch({
+        type: "MESSAGE_UPDATE",
+        message: { id, channel_id: cid, embeds: [...others, makeEmbed(id, link, d, 1)] },
+      });
+    } catch (e) { log("refresh error", e); }
+  }, EMBED_REFRESH_MS);
 }
 
 // Modifies the message in the payload (cache hit) or dispatches MESSAGE_UPDATE once the video is found
@@ -85,6 +113,7 @@ function process(msg, src = "") {
         type: "MESSAGE_UPDATE",
         message: { id: msg.id, channel_id, ...videoFields(msg.id, found.link, d, base, baseEmbeds) },
       });
+      refreshEmbed(msg.id, channel_id, found.link, d);
     };
     if (load && isNewestLinked(msg.id, channel_id)) {
       log("rvp:   newest message with a video -> adding after " + LAST_DELAY + " ms");
@@ -132,6 +161,7 @@ function attach(id, channel_id, link, d) {
     type: "MESSAGE_UPDATE",
     message: { id, channel_id, ...videoFields(id, link, d, Array.from(cur.attachments ?? []), Array.from(cur.embeds ?? [])) },
   });
+  refreshEmbed(id, channel_id, link, d);
 }
 
 // Goes through all messages of a channel already in the store and attaches videos where needed
