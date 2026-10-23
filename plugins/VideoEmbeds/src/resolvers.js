@@ -59,7 +59,14 @@ const HDRS = {
   "Accept-Language": "en-US,en;q=0.9",
 };
 // FB: no cookies (yt-dlp doesn't send them; cookies from earlier requests can change what FB returns)
-const FB_FETCH = { headers: HDRS, credentials: "omit" };
+// Same request headers as yt-dlp sends (std_headers: Accept, Accept-Language, Sec-Fetch-Mode)
+const FB_HDRS = {
+  "User-Agent": UA_DESKTOP,
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-us,en;q=0.5",
+  "Sec-Fetch-Mode": "navigate",
+};
+const FB_FETCH = { headers: FB_HDRS, credentials: "omit" };
 const LOGIN_RE = /id="login_form"|id="loginbutton"|You must log in to continue/;
 
 // Dimensions closest to the given position in the text (so we don't pick up another object's dimensions)
@@ -137,33 +144,46 @@ function anchorsFor(html, id) {
 }
 const distTo = (anchors, idx) => anchors.reduce((m, a) => Math.min(m, Math.abs(a - idx)), Infinity);
 
-function dashVideoOnly(html, anchors = []) {
+// DASH manifest (XML text) -> the video representation with the highest bandwidth (video only, no audio)
+function dashBestFromXml(xml) {
   const decode = (x) => x.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
+  let best = null;
+  const sets = xml.match(/<AdaptationSet[\s\S]*?<\/AdaptationSet>/g) || [];
+  for (const set of sets) {
+    const head = set.match(/<AdaptationSet([^>]*)>/)?.[1] ?? "";
+    const reps = set.match(/<Representation[\s\S]*?<\/Representation>/g) || [];
+    for (const rep of reps) {
+      const attrs = rep.match(/<Representation([^>]*)>/)?.[1] ?? "";
+      const isVideo = /contentType="video"/.test(head) || /mimeType="video\//.test(head + attrs);
+      const base = rep.match(/<BaseURL>([^<]+)<\/BaseURL>/)?.[1];
+      if (!isVideo || !base) continue;
+      const cand = {
+        url: decode(base),
+        bw: +(attrs.match(/bandwidth="(\d+)"/)?.[1] ?? 0),
+        w: +(attrs.match(/\swidth="(\d+)"/)?.[1] ?? 0),
+        h: +(attrs.match(/\sheight="(\d+)"/)?.[1] ?? 0),
+      };
+      if (!best || cand.bw > best.bw) best = cand;
+    }
+  }
+  return best;
+}
+
+// Manifest strings in FB data are sometimes URL-encoded (yt-dlp: unquote_plus)
+function fbManifestText(s) {
+  if (/^\s*</.test(s)) return s;
+  try { return decodeURIComponent(s.replace(/\+/g, " ")); } catch { return s; }
+}
+
+// Old-style fallback: all manifests found in the page text, the one nearest to the video ID wins
+function dashVideoOnly(html, anchors = []) {
   const re = /"(?:manifest_xml|dash_manifest)":"((?:[^"\\]|\\.)*)"/g;
   const found = [];
   let m;
   while ((m = re.exec(html))) {
     let xml;
     try { xml = JSON.parse('"' + m[1] + '"'); } catch { continue; }
-    let best = null;
-    const sets = xml.match(/<AdaptationSet[\s\S]*?<\/AdaptationSet>/g) || [];
-    for (const set of sets) {
-      const head = set.match(/<AdaptationSet([^>]*)>/)?.[1] ?? "";
-      const reps = set.match(/<Representation[\s\S]*?<\/Representation>/g) || [];
-      for (const rep of reps) {
-        const attrs = rep.match(/<Representation([^>]*)>/)?.[1] ?? "";
-        const isVideo = /contentType="video"/.test(head) || /mimeType="video\//.test(head + attrs);
-        const base = rep.match(/<BaseURL>([^<]+)<\/BaseURL>/)?.[1];
-        if (!isVideo || !base) continue;
-        const bw = +(attrs.match(/bandwidth="(\d+)"/)?.[1] ?? 0);
-        const cand = {
-          url: decode(base), bw,
-          w: +(attrs.match(/\swidth="(\d+)"/)?.[1] ?? 0),
-          h: +(attrs.match(/\sheight="(\d+)"/)?.[1] ?? 0),
-        };
-        if (!best || cand.bw > best.bw) best = cand;
-      }
-    }
+    const best = dashBestFromXml(fbManifestText(xml));
     if (best) found.push({ ...best, idx: m.index });
   }
   if (!found.length) return null;
@@ -173,14 +193,109 @@ function dashVideoOnly(html, anchors = []) {
   return { url: pick.url, w: pick.w, h: pick.h };
 }
 
-// returns { url, w, h, note? } or null; `id` = video ID from the link (if known)
-// Same as yt-dlp: parse the page's <script data-sjs> JSON blocks and take thumbnailImage.uri / preferred_thumbnail.image.uri
-// from the object whose id (or videoId) equals the video ID.
+// ------------------------------------------------------------ yt-dlp style: JSON in <script data-sjs> blocks
+// yt-dlp: re.findall(r'data-sjs>({.*?...})</script>') + json.loads, then looks for the Video object with the video ID.
+const FB_SJS_FILTER = /"(?:dash_manifest|playable_url|browser_native_|progressive_urls|videoDeliveryResponseFragment|videoDeliveryLegacyFields|thumbnailImage|preferred_thumbnail)/;
+function fbSjsBlocks(html) {
+  const out = [];
+  const re = /data-sjs[^>]*>(\{[\s\S]*?\})<\/script>/g;
+  let m;
+  while ((m = re.exec(html))) {
+    if (!FB_SJS_FILTER.test(m[1])) continue;
+    try { out.push(JSON.parse(m[1])); } catch {}
+  }
+  return out;
+}
+
+// Keys that hold a playable URL or manifest directly in a video object
+const FB_FMT_KEYS = ["playable_url", "playable_url_quality_hd", "browser_native_hd_url", "browser_native_sd_url",
+  "dash_manifest", "dash_manifest_xml_string", "manifest_xml"];
+const fbHasFormats = (o) =>
+  !!(o.videoDeliveryResponseFragment?.videoDeliveryResponseResult || o.videoDeliveryLegacyFields ||
+     FB_FMT_KEYS.some((k) => typeof o[k] === "string" && o[k]));
+const fbThumbOf = (o) => {
+  const u = o?.thumbnailImage?.uri || o?.preferred_thumbnail?.image?.uri;
+  return typeof u === "string" && u ? u : null;
+};
+
+// Collects every object that carries video formats; each gets the video ID (its own id/videoId, or the nearest ancestor's)
+function fbCollectVideos(node, inheritedId, out, depth) {
+  if (!node || typeof node !== "object" || depth > 60) return;
+  let id = inheritedId;
+  if (!Array.isArray(node)) {
+    const own = node.videoId ?? node.id;
+    if (own != null && /^\d+$/.test(String(own))) id = String(own);
+    if (fbHasFormats(node)) out.push({ v: node, id });
+  }
+  for (const k in node) fbCollectVideos(node[k], id, out, depth + 1);
+}
+
+// Formats of one video object (same keys as yt-dlp's parse_graphql_video). Progressive files carry audio; DASH here is video only.
+function fbFormatsOf(v) {
+  const prog = []; // { url, rank }  (lower rank = better quality, indexes into FB_SRC)
+  const add = (u, rank) => { if (typeof u === "string" && /^https?:/.test(u)) prog.push({ url: u, rank }); };
+  const legacy = v.videoDeliveryLegacyFields || v;
+  const res = v.videoDeliveryResponseFragment?.videoDeliveryResponseResult;
+  for (const p of res?.progressive_urls ?? []) {
+    add(p?.progressive_url, String(p?.metadata?.quality).toUpperCase() === "HD" ? 0 : 3);
+  }
+  add(legacy.browser_native_hd_url, 1);
+  add(legacy.playable_url_quality_hd, 2);
+  add(legacy.browser_native_sd_url, 4);
+  add(legacy.playable_url, 5);
+  const xmls = [];
+  for (const k of ["dash_manifest", "dash_manifest_xml_string", "manifest_xml"]) {
+    if (typeof legacy[k] === "string" && legacy[k]) xmls.push(legacy[k]);
+  }
+  for (const m of res?.dash_manifests ?? []) if (typeof m?.manifest_xml === "string") xmls.push(m.manifest_xml);
+  return { prog, xmls };
+}
+
+const FB_SRC = ["progressive HD", "browser_native_hd_url", "playable_url_quality_hd", "progressive SD",
+  "browser_native_sd_url", "playable_url", "hd_src", "sd_src"];
+
+// Main path: the video and its thumbnail come from the same JSON object (the one with this video ID)
+function fbFromRelay(html, id, where) {
+  const found = [];
+  for (const b of fbSjsBlocks(html)) fbCollectVideos(b, null, found, 0);
+  const ids = [...new Set(found.map((c) => c.id))].slice(0, 6);
+  if (!found.length) { log("rvp: FB JSON [" + where + "]: no video objects with formats"); return null; }
+  const pool = id ? found.filter((c) => c.id === String(id)) : found;
+  log("rvp: FB JSON [" + where + "]: video objects=" + found.length + ", with this ID=" + pool.length + ", IDs seen=" + JSON.stringify(ids));
+  if (!pool.length) return null;
+
+  let pick = null;
+  for (const c of pool) {
+    const f = fbFormatsOf(c.v);
+    const cand = { c, f };
+    if (f.prog.length) { pick = cand; break; }
+    if (!pick && f.xmls.length) pick = cand;
+  }
+  if (!pick) return null;
+
+  // a thumbnail from the chosen object, else from any other object with this ID
+  const thumb = fbThumbOf(pick.c.v) || pool.map((c) => fbThumbOf(c.v)).find(Boolean) || null;
+  if (pick.f.prog.length) {
+    const best = pick.f.prog.slice().sort((a, b) => a.rank - b.rank)[0];
+    log("rvp: FB JSON [" + where + "]: selected=" + FB_SRC[best.rank] + ", thumbnail=" + (thumb ? "yes" : "no"));
+    return { url: best.url, w: 0, h: 0, thumb };
+  }
+  for (const x of pick.f.xmls) {
+    const d = dashBestFromXml(fbManifestText(x));
+    if (d) {
+      log("rvp: FB JSON [" + where + "]: DASH only, thumbnail=" + (thumb ? "yes" : "no"));
+      return { url: d.url, w: d.w, h: d.h, thumb, note: "FB: DASH only, video without audio" };
+    }
+  }
+  return null;
+}
+
+// Thumbnail of the page: the Video object with this ID, else og:image / twitter:image (yt-dlp ignores URLs without .jpg/.png)
 function walkThumb(o, id, depth) {
   if (!o || typeof o !== "object" || depth > 40) return null;
   if (!Array.isArray(o) && (String(o.id) === id || String(o.videoId) === id)) {
-    const u = o.thumbnailImage?.uri || o.preferred_thumbnail?.image?.uri;
-    if (typeof u === "string" && u) return u;
+    const u = fbThumbOf(o);
+    if (u) return u;
   }
   for (const k in o) {
     const r = walkThumb(o[k], id, depth + 1);
@@ -188,68 +303,27 @@ function walkThumb(o, id, depth) {
   }
   return null;
 }
-function fbThumbFromJson(html, id) {
-  if (!id) return null;
-  try {
-    const re = /data-sjs[^>]*>(\{[\s\S]*?\})<\/script>/g;
-    let m, blocks = 0;
-    while ((m = re.exec(html))) {
-      if (!/thumbnailImage|preferred_thumbnail/.test(m[1])) continue;
-      blocks++;
-      let data;
-      try { data = JSON.parse(m[1]); } catch { continue; }
-      const u = walkThumb(data, String(id), 0);
-      if (u) { log("rvp: FB thumbnail from JSON object with the video ID"); return u; }
-    }
-    log("rvp: FB thumbnail JSON: no object with the video ID (blocks with thumbnail keys: " + blocks + ")");
-  } catch (e) { log("rvp: FB thumbnail JSON failed:", e?.message ?? e); }
-  return null;
-}
-
-// Thumbnail of the video. yt-dlp takes it from the media object whose id equals the video ID, which can sit far from the
-// video URL in the page, so a candidate is measured against both the video URL position and the video ID positions.
-function fbThumb(html, idx, anchors = [], id = null) {
-  const fromJson = fbThumbFromJson(html, id);
-  if (fromJson) return fromJson;
-  const res = [
-    /"preferred_thumbnail":\s*\{\s*"image":\s*\{[^{}]*?"uri":"([^"]+)"/g,
-    /"thumbnailImage":\s*\{[^{}]*?"uri":"([^"]+)"/g,
-    /"thumbnail_image":\s*\{[^{}]*?"uri":"([^"]+)"/g,
-    /"(?:previewImage|preview_image|poster_image|first_frame_thumbnail)":\s*\{[^{}]*?"uri":"([^"]+)"/g,
-    /"(?:thumbnail_src|thumbnailUrl|thumbnail_url|poster)":\s*"(https?:[^"]+)"/g,
-  ];
-  const cands = [];
-  for (const re of res) {
-    let m;
-    while ((m = re.exec(html))) {
-      const d = Math.min(idx >= 0 ? Math.abs(m.index - idx) : Infinity, anchors.length ? distTo(anchors, m.index) : Infinity);
-      cands.push({ u: unesc(m[1]), d });
-    }
-  }
-  const best = cands.reduce((p, c) => (!p || c.d < p.d ? c : p), null);
-  if (best && ((idx < 0 && !anchors.length) || best.d <= 30000)) return best.u;
+function fbOgThumb(html) {
   const og =
     html.match(/<meta[^>]+(?:property|name)="(?:og|twitter):image(?::secure_url)?"[^>]+content="([^"]+)"/i) ||
     html.match(/<meta[^>]+content="([^"]+)"[^>]+(?:property|name)="(?:og|twitter):image"/i);
-  // like yt-dlp: ignore lookaside crawler URLs that are not real images
-  if (og && /\.(?:jpg|png)/.test(og[1])) return og[1].replace(/&amp;/g, "&");
-  // nothing found: log what the page has, so the search can be fixed
+  return og && /\.(?:jpg|png)/.test(og[1]) ? og[1].replace(/&amp;/g, "&") : null;
+}
+function fbPageThumb(html, id) {
   try {
-    const keys = new Map();
-    const kr = /"([A-Za-z_]*(?:thumb|poster|preview)[A-Za-z_]*)":\s*(\{[^{}]{0,120}|"[^"]{0,100})/gi;
-    let k;
-    while ((k = kr.exec(html)) && keys.size < 12) if (!keys.has(k[1])) keys.set(k[1], k[2].slice(0, 90));
-    log("rvp: FB thumbnail: no match | candidates=" + cands.length + ", closest distance=" + (best ? best.d : "-") +
-      ", ID anchors=" + anchors.length + ", page size=" + html.length + " B");
-    log("rvp: FB thumbnail keys in page:", keys.size ? JSON.stringify([...keys]) : "none");
-  } catch {}
-  return null;
+    if (id) {
+      for (const b of fbSjsBlocks(html)) {
+        const u = walkThumb(b, String(id), 0);
+        if (u) return u;
+      }
+    }
+  } catch (e) { log("rvp: FB page thumbnail failed:", e?.message ?? e); }
+  return fbOgThumb(html);
 }
 
-const FB_SRC = ["progressive HD", "browser_native_hd_url", "playable_url_quality_hd", "progressive SD",
-  "browser_native_sd_url", "playable_url", "hd_src", "sd_src"];
-function parseFB(html, id, where = "main page") {
-  const cands = []; // { url, idx, rank }  (lower rank = better quality)
+// Old-style fallback: scan the page TEXT for known keys (used when the JSON objects don't have the video ID)
+function parseFBText(html, id, where = "main page") {
+  const cands = []; // { url, idx, rank }
   const addStr = (key, rank) => {
     const re = new RegExp('"' + key + '":"([^"]+)"', "g");
     let m;
@@ -282,20 +356,45 @@ function parseFB(html, id, where = "main page") {
       pick = cands.slice().sort((x, y) => x.rank - y.rank || x.idx - y.idx)[0];
     }
     const d = nearDims(html, pick.idx);
-    log("rvp: FB parse [" + where + "]: candidates=" + cands.length + ", ID anchors=" + anchors.length +
+    log("rvp: FB text [" + where + "]: candidates=" + cands.length + ", ID anchors=" + anchors.length +
       ", selected=" + FB_SRC[pick.rank] + ", " +
       (anchors.length ? "distance from ID=" + distTo(anchors, pick.idx) : "NO ID anchor -> taking the first match (risk of a different video)") +
       ", dimensions=" + (d ? d.w + "x" + d.h : "?"));
-    const thumb = fbThumb(html, pick.idx, anchors, id);
-    log("rvp: FB thumbnail:", thumb ?? "none found");
-    return { url: pick.url, w: d?.w || 0, h: d?.h || 0, thumb };
+    return { url: pick.url, w: d?.w || 0, h: d?.h || 0 };
   }
-  log("rvp: FB parse [" + where + "]: no progressive candidates, trying DASH (ID anchors=" + anchors.length + ")");
+  log("rvp: FB text [" + where + "]: no progressive candidates, trying DASH (ID anchors=" + anchors.length + ")");
   const dash = dashVideoOnly(html, anchors);
-  if (!dash) return null;
-  const thumb = fbThumb(html, -1, anchors, id);
-  log("rvp: FB thumbnail:", thumb ?? "none found");
-  return { ...dash, thumb, note: "FB: DASH only, video without audio" };
+  return dash ? { ...dash, note: "FB: DASH only, video without audio" } : null;
+}
+
+// One page -> result: JSON objects first (like yt-dlp), then the text scan; the thumbnail is completed from the page if missing
+function parseFB(html, id, where, pageThumb) {
+  let out = null;
+  try { out = fbFromRelay(html, id, where); } catch (e) { log("rvp: FB JSON failed:", e?.message ?? e); }
+  if (!out) out = parseFBText(html, id, where);
+  if (!out) return null;
+  if (!out.thumb) out.thumb = pageThumb || fbPageThumb(html, id) || null;
+  return out;
+}
+
+// yt-dlp's second request when the first page has no video data: POST to the "tahoe" player endpoint with tokens from the page
+async function fbTahoe(html, id) {
+  const pick = (re, d) => html.match(re)?.[1] ?? d;
+  const body = [
+    ["__a", "1"],
+    ["__pc", pick(/pkg_cohort["']\s*:\s*["'](.+?)["']/, "PHASED:DEFAULT")],
+    ["__rev", pick(/client_revision["']\s*:\s*(\d+),/, "3944515")],
+    ["fb_dtsg", pick(/"DTSGInitialData"\s*,\s*\[\]\s*,\s*\{\s*"token"\s*:\s*"([^"]+)"/, "")],
+  ].map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
+  const u = `https://www.facebook.com/video/tahoe/async/${id}/?chain=true&isvideo=true&payloadtype=primary`;
+  log("rvp: FB tahoe request:", u);
+  const r = await fetch(u, {
+    method: "POST",
+    headers: { ...FB_HDRS, "Content-Type": "application/x-www-form-urlencoded" },
+    credentials: "omit",
+    body,
+  });
+  return await r.text();
 }
 
 async function resolveFB(url) {
@@ -308,8 +407,18 @@ async function resolveFB(url) {
   let loginWall = LOGIN_RE.test(html);
   log("rvp: FB response: status=" + r.status + ", final URL=" + final + ", video ID=" + (id ?? "unknown") +
     ", size=" + html.length + " B, login wall=" + loginWall);
-  const out = parseFB(html, id);
-  if (out) return out;
+
+  // the thumbnail of the main page is also used when the video itself had to be taken from another request
+  const pageThumb = fbPageThumb(html, id);
+  log("rvp: FB page thumbnail:", pageThumb ?? "none");
+  const done = (o) => {
+    if (!o.thumb) o.thumb = pageThumb;
+    log("rvp: FB thumbnail:", o.thumb ?? "none found");
+    return o;
+  };
+
+  const out = parseFB(html, id, "main page", pageThumb);
+  if (out) return done(out);
 
   // share link: get the numeric ID and process it as facebook.com/reel/<ID>/ (where a browser redirects too)
   if (!id) {
@@ -320,26 +429,32 @@ async function resolveFB(url) {
     if (!loginWall) throw permanent("FB: link is not a video (page or post)");
   }
 
-  // other variants of the same page – FB sometimes doesn't provide data for one of them
   if (id) {
-    log("rvp: FB main page gave nothing, trying alternative URLs for ID " + id);
-    // plugins/video.php always succeeded in the logs, the other variants never did -> try it first, the rest only if it fails
+    // yt-dlp: no video data in the page -> second request to the tahoe endpoint
+    try {
+      const t = await fbTahoe(html, id);
+      log("rvp: FB tahoe response:", t.length + " B");
+      const o = parseFB(t, id, "tahoe", pageThumb);
+      if (o) return done(o);
+    } catch (e) { log("rvp: FB tahoe failed:", e?.message ?? e); }
+
+    // other variants of the same page – FB sometimes doesn't provide data for one of them
+    log("rvp: FB trying alternative URLs for ID " + id);
     const alts = [
       `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent("https://www.facebook.com/watch/?v=" + id)}&show_text=false`,
       `https://www.facebook.com/watch/?v=${id}`,
       `https://www.facebook.com/video.php?v=${id}`,
+      `https://www.facebook.com/video/video.php?v=${id}`,
     ].filter((u) => u !== first);
-    let o = null;
     for (const u of alts) {
       try {
         const h = await (await fetch(u, FB_FETCH)).text();
         if (LOGIN_RE.test(h)) loginWall = true;
         log("rvp: FB alternative:", u, "(" + h.length + " B)");
-        o = parseFB(h, id, "alternative");
-        if (o) break;
+        const o = parseFB(h, id, "alternative", pageThumb);
+        if (o) return done(o);
       } catch (e) { log("rvp: FB alternative failed:", u, e?.message ?? e); }
     }
-    if (o) return o;
   }
   throw new Error(loginWall ? "FB: login required" : "FB: no progressive or DASH video");
 }
