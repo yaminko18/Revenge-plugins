@@ -66,7 +66,8 @@ const FB_HDRS = {
   "Accept-Language": "en-us,en;q=0.5",
   "Sec-Fetch-Mode": "navigate",
 };
-const FB_FETCH = { headers: FB_HDRS, credentials: "omit" };
+const FB_FETCH = { headers: FB_HDRS, credentials: "omit" };          // yt-dlp style
+const FB_FETCH_BROWSER = { headers: HDRS, credentials: "omit" };   // the headers used before (video was found with these)
 const LOGIN_RE = /id="login_form"|id="loginbutton"|You must log in to continue/;
 
 // Dimensions closest to the given position in the text (so we don't pick up another object's dimensions)
@@ -309,6 +310,41 @@ function fbOgThumb(html) {
     html.match(/<meta[^>]+content="([^"]+)"[^>]+(?:property|name)="(?:og|twitter):image"/i);
   return og && /\.(?:jpg|png)/.test(og[1]) ? og[1].replace(/&amp;/g, "&") : null;
 }
+// Last resort: thumbnail fields found in the page TEXT, only those close to a place where the video ID occurs
+function fbThumbRegex(html, id) {
+  const anchors = anchorsFor(html, id);
+  if (!anchors.length) return null;
+  const res = [
+    /"preferred_thumbnail":\s*\{\s*"image":\s*\{[^{}]*?"uri":"([^"]+)"/g,
+    /"thumbnailImage":\s*\{[^{}]*?"uri":"([^"]+)"/g,
+    /"(?:thumbnail_image|previewImage|preview_image|poster_image|first_frame_thumbnail)":\s*\{[^{}]*?"uri":"([^"]+)"/g,
+    /"(?:thumbnail_src|thumbnailUrl|thumbnail_url|video_preview_image_url|poster)":\s*"(https?:[^"]+)"/g,
+  ];
+  let best = null;
+  for (const re of res) {
+    let m;
+    while ((m = re.exec(html))) {
+      const d = distTo(anchors, m.index);
+      if (d <= 30000 && (!best || d < best.d)) best = { u: unesc(m[1]), d };
+    }
+  }
+  return best ? best.u : null;
+}
+
+// When no thumbnail was found: what does the page contain? (so the search can be fixed)
+function fbThumbDiag(html, id) {
+  try {
+    const keys = new Map();
+    const kr = /"([A-Za-z_]*(?:thumb|poster|preview)[A-Za-z_]*)":\s*(\{[^{}]{0,120}|"[^"]{0,100})/gi;
+    let k;
+    while ((k = kr.exec(html)) && keys.size < 12) if (!keys.has(k[1])) keys.set(k[1], k[2].slice(0, 90));
+    const og = html.match(/<meta[^>]+(?:property|name)="(?:og|twitter):image"[^>]*>/i)?.[0];
+    log("rvp: FB thumbnail diag: page=" + html.length + " B, data-sjs blocks=" + (html.match(/data-sjs/g) || []).length +
+      ", ID anchors=" + anchorsFor(html, id).length + ", og:image tag=" + (og ? og.slice(0, 160) : "none"));
+    log("rvp: FB thumbnail diag keys:", keys.size ? JSON.stringify([...keys]) : "none");
+  } catch {}
+}
+
 function fbPageThumb(html, id) {
   try {
     if (id) {
@@ -318,7 +354,7 @@ function fbPageThumb(html, id) {
       }
     }
   } catch (e) { log("rvp: FB page thumbnail failed:", e?.message ?? e); }
-  return fbOgThumb(html);
+  return fbOgThumb(html) || fbThumbRegex(html, id);
 }
 
 // Old-style fallback: scan the page TEXT for known keys (used when the JSON objects don't have the video ID)
@@ -399,25 +435,29 @@ async function fbTahoe(html, id) {
 
 async function resolveFB(url) {
   const first = normFB(url);
-  log("rvp: FB fetching page:", first);
-  const r = await fetch(first, FB_FETCH);
-  const final = r.url || first;
-  const html = await r.text();
-  const id = fbId(final) || fbId(url);
-  let loginWall = LOGIN_RE.test(html);
-  log("rvp: FB response: status=" + r.status + ", final URL=" + final + ", video ID=" + (id ?? "unknown") +
-    ", size=" + html.length + " B, login wall=" + loginWall);
-
+  let html = "", final = first, id = null, loginWall = false, pageThumb = null, out = null;
+  for (const [name, opts] of [["browser headers", FB_FETCH_BROWSER], ["yt-dlp headers", FB_FETCH]]) {
+    log("rvp: FB fetching page (" + name + "):", first);
+    const r = await fetch(first, opts);
+    final = r.url || first;
+    html = await r.text();
+    id = fbId(final) || fbId(url);
+    loginWall = LOGIN_RE.test(html);
+    log("rvp: FB response: status=" + r.status + ", final URL=" + final + ", video ID=" + (id ?? "unknown") +
+      ", size=" + html.length + " B, login wall=" + loginWall);
+    pageThumb = fbPageThumb(html, id);
+    log("rvp: FB page thumbnail:", pageThumb ?? "none");
+    out = parseFB(html, id, "main page, " + name, pageThumb);
+    if (out || !id) break;   // without a video ID a second fetch would give the same page
+  }
   // the thumbnail of the main page is also used when the video itself had to be taken from another request
-  const pageThumb = fbPageThumb(html, id);
-  log("rvp: FB page thumbnail:", pageThumb ?? "none");
   const done = (o) => {
     if (!o.thumb) o.thumb = pageThumb;
+    if (!o.thumb) fbThumbDiag(html, id);
     log("rvp: FB thumbnail:", o.thumb ?? "none found");
     return o;
   };
 
-  const out = parseFB(html, id, "main page", pageThumb);
   if (out) return done(out);
 
   // share link: get the numeric ID and process it as facebook.com/reel/<ID>/ (where a browser redirects too)
@@ -796,6 +836,29 @@ export function resolve(link, kind) {
     .finally(() => pending.delete(link));
   pending.set(link, p);
   return p;
+}
+
+// Settings page helpers -------------------------------------------------
+// How many videos are remembered right now (in memory / saved in this plugin's storage)
+export function cacheInfo() {
+  let saved = 0;
+  try { saved = Object.keys(store()?.vcache ?? {}).length; } catch {}
+  return { memory: cache.size, saved };
+}
+
+// Deletes everything THIS plugin stored (the saved video cache) and empties its in-memory cache. Touches nothing else.
+export function wipePluginData() {
+  const before = cacheInfo();
+  clearCache();   // also cancels a pending delayed save, so it can't write the old data back
+  const st = store();
+  let removed = 0;
+  if (st) {
+    for (const k of Object.keys(st)) {
+      try { delete st[k]; removed++; } catch (e) { log("rvp: could not delete storage key", k, e?.message ?? e); }
+    }
+  }
+  log("rvp: plugin data cleared (memory entries: " + before.memory + ", saved entries: " + before.saved + ", storage keys removed: " + removed + ")");
+  return before;
 }
 
 export function clearCache() {
