@@ -174,14 +174,48 @@ function dashVideoOnly(html, anchors = []) {
 }
 
 // returns { url, w, h, note? } or null; `id` = video ID from the link (if known)
+// Same as yt-dlp: parse the page's <script data-sjs> JSON blocks and take thumbnailImage.uri / preferred_thumbnail.image.uri
+// from the object whose id (or videoId) equals the video ID.
+function walkThumb(o, id, depth) {
+  if (!o || typeof o !== "object" || depth > 40) return null;
+  if (!Array.isArray(o) && (String(o.id) === id || String(o.videoId) === id)) {
+    const u = o.thumbnailImage?.uri || o.preferred_thumbnail?.image?.uri;
+    if (typeof u === "string" && u) return u;
+  }
+  for (const k in o) {
+    const r = walkThumb(o[k], id, depth + 1);
+    if (r) return r;
+  }
+  return null;
+}
+function fbThumbFromJson(html, id) {
+  if (!id) return null;
+  try {
+    const re = /data-sjs[^>]*>(\{[\s\S]*?\})<\/script>/g;
+    let m, blocks = 0;
+    while ((m = re.exec(html))) {
+      if (!/thumbnailImage|preferred_thumbnail/.test(m[1])) continue;
+      blocks++;
+      let data;
+      try { data = JSON.parse(m[1]); } catch { continue; }
+      const u = walkThumb(data, String(id), 0);
+      if (u) { log("rvp: FB thumbnail from JSON object with the video ID"); return u; }
+    }
+    log("rvp: FB thumbnail JSON: no object with the video ID (blocks with thumbnail keys: " + blocks + ")");
+  } catch (e) { log("rvp: FB thumbnail JSON failed:", e?.message ?? e); }
+  return null;
+}
+
 // Thumbnail of the video. yt-dlp takes it from the media object whose id equals the video ID, which can sit far from the
 // video URL in the page, so a candidate is measured against both the video URL position and the video ID positions.
-function fbThumb(html, idx, anchors = []) {
+function fbThumb(html, idx, anchors = [], id = null) {
+  const fromJson = fbThumbFromJson(html, id);
+  if (fromJson) return fromJson;
   const res = [
-    /"preferred_thumbnail":\s*\{"image":\s*\{"uri":"([^"]+)"/g,
-    /"thumbnailImage":\s*\{"uri":"([^"]+)"/g,
-    /"thumbnail_image":\s*\{"uri":"([^"]+)"/g,
-    /"(?:previewImage|preview_image|poster_image|first_frame_thumbnail)":\s*\{"uri":"([^"]+)"/g,
+    /"preferred_thumbnail":\s*\{\s*"image":\s*\{[^{}]*?"uri":"([^"]+)"/g,
+    /"thumbnailImage":\s*\{[^{}]*?"uri":"([^"]+)"/g,
+    /"thumbnail_image":\s*\{[^{}]*?"uri":"([^"]+)"/g,
+    /"(?:previewImage|preview_image|poster_image|first_frame_thumbnail)":\s*\{[^{}]*?"uri":"([^"]+)"/g,
     /"(?:thumbnail_src|thumbnailUrl|thumbnail_url|poster)":\s*"(https?:[^"]+)"/g,
   ];
   const cands = [];
@@ -197,7 +231,8 @@ function fbThumb(html, idx, anchors = []) {
   const og =
     html.match(/<meta[^>]+(?:property|name)="(?:og|twitter):image(?::secure_url)?"[^>]+content="([^"]+)"/i) ||
     html.match(/<meta[^>]+content="([^"]+)"[^>]+(?:property|name)="(?:og|twitter):image"/i);
-  if (og) return og[1].replace(/&amp;/g, "&");
+  // like yt-dlp: ignore lookaside crawler URLs that are not real images
+  if (og && /\.(?:jpg|png)/.test(og[1])) return og[1].replace(/&amp;/g, "&");
   // nothing found: log what the page has, so the search can be fixed
   try {
     const keys = new Map();
@@ -251,14 +286,14 @@ function parseFB(html, id, where = "main page") {
       ", selected=" + FB_SRC[pick.rank] + ", " +
       (anchors.length ? "distance from ID=" + distTo(anchors, pick.idx) : "NO ID anchor -> taking the first match (risk of a different video)") +
       ", dimensions=" + (d ? d.w + "x" + d.h : "?"));
-    const thumb = fbThumb(html, pick.idx, anchors);
+    const thumb = fbThumb(html, pick.idx, anchors, id);
     log("rvp: FB thumbnail:", thumb ?? "none found");
     return { url: pick.url, w: d?.w || 0, h: d?.h || 0, thumb };
   }
   log("rvp: FB parse [" + where + "]: no progressive candidates, trying DASH (ID anchors=" + anchors.length + ")");
   const dash = dashVideoOnly(html, anchors);
   if (!dash) return null;
-  const thumb = fbThumb(html, -1, anchors);
+  const thumb = fbThumb(html, -1, anchors, id);
   log("rvp: FB thumbnail:", thumb ?? "none found");
   return { ...dash, thumb, note: "FB: DASH only, video without audio" };
 }
