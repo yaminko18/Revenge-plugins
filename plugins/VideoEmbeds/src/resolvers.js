@@ -209,7 +209,7 @@ function fbSjsBlocks(html) {
 }
 
 // Keys that hold a playable URL or manifest directly in a video object
-const FB_FMT_KEYS = ["playable_url", "playable_url_quality_hd", "browser_native_hd_url", "browser_native_sd_url",
+const FB_FMT_KEYS = ["playable_url", "playable_url_quality_hd", "playable_url_dash", "browser_native_hd_url", "browser_native_sd_url",
   "dash_manifest", "dash_manifest_xml_string", "manifest_xml"];
 const fbHasFormats = (o) =>
   !!(o.videoDeliveryResponseFragment?.videoDeliveryResponseResult || o.videoDeliveryLegacyFields ||
@@ -234,7 +234,13 @@ function fbCollectVideos(node, inheritedId, out, depth) {
 // Formats of one video object (same keys as yt-dlp's parse_graphql_video). Progressive files carry audio; DASH here is video only.
 function fbFormatsOf(v) {
   const prog = []; // { url, rank }  (lower rank = better quality, indexes into FB_SRC)
-  const add = (u, rank) => { if (typeof u === "string" && /^https?:/.test(u)) prog.push({ url: u, rank }); };
+  const mpds = []; // URLs of DASH manifests (.mpd) that have to be downloaded and parsed
+  const isMpd = (u) => /\.mpd(?:[?#]|$)/i.test(u);
+  const add = (u, rank) => {
+    if (typeof u !== "string" || !/^https?:/.test(u)) return;
+    if (isMpd(u)) mpds.push(u);   // yt-dlp: determine_ext(url) == "mpd" -> manifest, not a video file
+    else prog.push({ url: u, rank });
+  };
   const legacy = v.videoDeliveryLegacyFields || v;
   const res = v.videoDeliveryResponseFragment?.videoDeliveryResponseResult;
   for (const p of res?.progressive_urls ?? []) {
@@ -244,12 +250,19 @@ function fbFormatsOf(v) {
   add(legacy.playable_url_quality_hd, 2);
   add(legacy.browser_native_sd_url, 4);
   add(legacy.playable_url, 5);
+  add(legacy.playable_url_dash, 5);
   const xmls = [];
   for (const k of ["dash_manifest", "dash_manifest_xml_string", "manifest_xml"]) {
     if (typeof legacy[k] === "string" && legacy[k]) xmls.push(legacy[k]);
   }
   for (const m of res?.dash_manifests ?? []) if (typeof m?.manifest_xml === "string") xmls.push(m.manifest_xml);
-  return { prog, xmls };
+  // yt-dlp: manifest URLs are used only when the manifests are not already provided in the data
+  if (!xmls.length) {
+    for (const m of res?.dash_manifest_urls ?? []) {
+      if (typeof m?.manifest_url === "string" && /^https?:/.test(m.manifest_url)) mpds.push(m.manifest_url);
+    }
+  }
+  return { prog, xmls, mpds: [...new Set(mpds)] };
 }
 
 const FB_SRC = ["progressive HD", "browser_native_hd_url", "playable_url_quality_hd", "progressive SD",
@@ -270,7 +283,8 @@ function fbFromRelay(html, id, where) {
     const f = fbFormatsOf(c.v);
     const cand = { c, f };
     if (f.prog.length) { pick = cand; break; }
-    if (!pick && f.xmls.length) pick = cand;
+    if (f.xmls.length && (!pick || !pick.f.xmls.length)) pick = cand;
+    else if (!pick && f.mpds.length) pick = cand;
   }
   if (!pick) return null;
 
@@ -287,6 +301,25 @@ function fbFromRelay(html, id, where) {
       log("rvp: FB JSON [" + where + "]: DASH only, thumbnail=" + (thumb ? "yes" : "no"));
       return { url: d.url, w: d.w, h: d.h, thumb, note: "FB: DASH only, video without audio" };
     }
+  }
+  if (pick.f.mpds.length) {
+    log("rvp: FB JSON [" + where + "]: DASH manifest URL(s) only: " + pick.f.mpds.length + ", thumbnail=" + (thumb ? "yes" : "no"));
+    return { mpds: pick.f.mpds, thumb };   // resolved in parseFB (needs a download)
+  }
+  return null;
+}
+
+// Downloads DASH manifests (.mpd) and returns the best video-only representation (BaseURL made absolute)
+async function fbFromMpds(mpds) {
+  for (const u of mpds) {
+    try {
+      log("rvp: FB downloading DASH manifest:", u);
+      const xml = await (await fetch(u, FB_FETCH)).text();
+      const d = dashBestFromXml(xml);
+      if (!d) { log("rvp: FB DASH manifest has no video representation (" + xml.length + " B)"); continue; }
+      if (!/^https?:/i.test(d.url)) d.url = u.replace(/[?#].*$/, "").replace(/[^/]*$/, "") + d.url;   // relative BaseURL
+      return d;
+    } catch (e) { log("rvp: FB DASH manifest failed:", e?.message ?? e); }
   }
   return null;
 }
@@ -379,6 +412,7 @@ function parseFBText(html, id, where = "main page") {
   addStr("hd_src_no_ratelimit", 6); addStr("hd_src", 6);
   addStr("sd_src_no_ratelimit", 7); addStr("sd_src", 7);
 
+  for (let i = cands.length - 1; i >= 0; i--) if (/\.mpd(?:[?#]|$)/i.test(cands[i].url)) cands.splice(i, 1);
   const anchors = anchorsFor(html, id);
   if (cands.length) {
     let pick;
@@ -404,9 +438,13 @@ function parseFBText(html, id, where = "main page") {
 }
 
 // One page -> result: JSON objects first (like yt-dlp), then the text scan; the thumbnail is completed from the page if missing
-function parseFB(html, id, where, pageThumb) {
+async function parseFB(html, id, where, pageThumb) {
   let out = null;
   try { out = fbFromRelay(html, id, where); } catch (e) { log("rvp: FB JSON failed:", e?.message ?? e); }
+  if (out?.mpds) {
+    const d = await fbFromMpds(out.mpds);
+    out = d ? { url: d.url, w: d.w, h: d.h, thumb: out.thumb, note: "FB: DASH only, video without audio" } : null;
+  }
   if (!out) out = parseFBText(html, id, where);
   if (!out) return null;
   if (!out.thumb) out.thumb = pageThumb || fbPageThumb(html, id) || null;
@@ -447,7 +485,7 @@ async function resolveFB(url) {
       ", size=" + html.length + " B, login wall=" + loginWall);
     pageThumb = fbPageThumb(html, id);
     log("rvp: FB page thumbnail:", pageThumb ?? "none");
-    out = parseFB(html, id, "main page, " + name, pageThumb);
+    out = await parseFB(html, id, "main page, " + name, pageThumb);
     if (out || !id) break;   // without a video ID a second fetch would give the same page
   }
   // the thumbnail of the main page is also used when the video itself had to be taken from another request
@@ -474,7 +512,7 @@ async function resolveFB(url) {
     try {
       const t = await fbTahoe(html, id);
       log("rvp: FB tahoe response:", t.length + " B");
-      const o = parseFB(t, id, "tahoe", pageThumb);
+      const o = await parseFB(t, id, "tahoe", pageThumb);
       if (o) return done(o);
     } catch (e) { log("rvp: FB tahoe failed:", e?.message ?? e); }
 
@@ -491,7 +529,7 @@ async function resolveFB(url) {
         const h = await (await fetch(u, FB_FETCH)).text();
         if (LOGIN_RE.test(h)) loginWall = true;
         log("rvp: FB alternative:", u, "(" + h.length + " B)");
-        const o = parseFB(h, id, "alternative", pageThumb);
+        const o = await parseFB(h, id, "alternative", pageThumb);
         if (o) return done(o);
       } catch (e) { log("rvp: FB alternative failed:", u, e?.message ?? e); }
     }
