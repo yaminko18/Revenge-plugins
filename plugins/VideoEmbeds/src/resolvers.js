@@ -255,7 +255,250 @@ function fbFormatsOf(v) {
 const FB_SRC = ["progressive HD", "browser_native_hd_url", "playable_url_quality_hd", "progressive SD",
   "browser_native_sd_url", "playable_url", "hd_src", "sd_src"];
 
-// Main path: the video and its thumbnail come from the same JSON object (the one with this video ID)
+// ============================================================ Port of yt-dlp facebook.py (the "relay" data path)
+// yt-dlp does NOT look for the video by its ID. It takes the first prefetched relay `data` dict of the page, reads the
+// video(s) from it (video / nodes / mediaset / event) and builds the formats from the keys of that one video object.
+const isDict = (x) => !!x && typeof x === "object" && !Array.isArray(x);
+const kidsOf = (x) => (Array.isArray(x) ? x : isDict(x) ? Object.values(x) : []);   // traverse_obj `...`
+const nonEmpty = (x) => x != null && !(isDict(x) && !Object.keys(x).length);          // {} and None are "no value"
+const firstOf = (obj, ...keys) => { for (const k of keys) { const v = obj?.[k]; if (nonEmpty(v)) return v; } return undefined; };
+const asList = (x) => (Array.isArray(x) ? x : x == null ? [] : [x]);                  // yt-dlp variadic()
+const isMpdUrl = (u) => /\.mpd(?:[?#]|$)/i.test(String(u));                            // determine_ext(url) == "mpd"
+const httpUrl = (u) => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : null);   // url_or_none
+
+// yt-dlp: re.findall(r'data-sjs>({.*?"(?:dash_manifest|playable_url(?:_quality_hd)?).*?})</script>')
+const FB_RELAY_FILTER = /"(?:dash_manifest|playable_url(?:_quality_hd)?)/;
+const FB_RELAY_TARGETS = ["video", "event", "nodes", "node", "mediaset"];
+
+// lambda _, v: any(key.startswith('RelayPrefetchedStreamCache') for key in v)
+function fbIsRelayEntry(v) {
+  if (Array.isArray(v)) {
+    for (const el of v) {
+      if (typeof el !== "string") return false;   // (a non-string raises in yt-dlp -> no match)
+      if (el.startsWith("RelayPrefetchedStreamCache")) return true;
+    }
+    return false;
+  }
+  return isDict(v) && Object.keys(v).some((k) => k.startsWith("RelayPrefetchedStreamCache"));
+}
+
+// traverse_obj(blob, 'require', (None, (..., ..., ..., '__bbox', 'require')), <relay entry>, ..., ..., '__bbox', 'result', <data with a target key>)
+function fbDataFromBlob(blob) {
+  const req = blob?.require;
+  if (!Array.isArray(req)) return null;
+  const branches = [req];
+  for (const x1 of kidsOf(req)) for (const x2 of kidsOf(x1)) for (const x3 of kidsOf(x2)) {
+    const r = x3?.__bbox?.require;
+    if (Array.isArray(r)) branches.push(r);
+  }
+  for (const branch of branches) {
+    for (const entry of branch) {
+      if (!fbIsRelayEntry(entry)) continue;
+      for (const e1 of kidsOf(entry)) for (const e2 of kidsOf(e1)) {
+        const result = e2?.__bbox?.result;
+        if (!isDict(result)) continue;
+        for (const [k, v] of Object.entries(result)) {
+          if (k === "data" && isDict(v) && FB_RELAY_TARGETS.some((t) => t in v)) return v;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// The FIRST such data dict in the page (yt-dlp: get_all=False)
+function fbRelayPrefetched(html) {
+  const re = /data-sjs[^>]*>(\{[\s\S]*?\})<\/script>/g;
+  let m;
+  while ((m = re.exec(html))) {
+    if (!FB_RELAY_FILTER.test(m[1])) continue;
+    let blob;
+    try { blob = JSON.parse(m[1]); } catch { continue; }   // fatal=False -> skipped
+    const data = fbDataFromBlob(blob);
+    if (data) return data;
+  }
+  return null;
+}
+
+const FB_LEGACY_KEYS = [["playable_url", "sd"], ["playable_url_quality_hd", "hd"], ["playable_url_dash", ""],
+  ["browser_native_hd_url", "hd"], ["browser_native_sd_url", "sd"]];
+const FB_MANIFEST_KEYS = ["dash_manifest", "playlist", "dash_manifest_xml_string", "manifest_xml"];
+const fbManifestOf = (o) => FB_MANIFEST_KEYS.map((k) => o?.[k]).find((x) => typeof x === "string" && x);
+
+// parse_graphql_video(video): the formats of ONE video object (reels: creation_story merged with playback_video)
+function fbGraphqlVideo(video, videoId, entries) {
+  if (!isDict(video)) return;
+  const vId = String(video.videoId || video.id || videoId || "");
+  const reel = video.creation_story?.short_form_video_context?.playback_video;
+  if (isDict(reel) && Object.keys(reel).length) video = { ...video.creation_story, ...reel };
+
+  const prog = [];   // progressive files (video + audio): { url, fid }
+  const xmls = [];   // DASH manifests given as XML text
+  const mpds = [];   // DASH manifests given as URLs (.mpd)
+
+  // legacy formats
+  const legacy = isDict(video.videoDeliveryLegacyFields) && Object.keys(video.videoDeliveryLegacyFields).length
+    ? video.videoDeliveryLegacyFields : video;
+  for (const [key, fid] of FB_LEGACY_KEYS) {
+    const u = legacy[key];
+    if (!u) continue;
+    if (isMpdUrl(u)) mpds.push(u); else prog.push({ url: u, fid });
+  }
+  const legacyMan = fbManifestOf(legacy);
+  if (legacyMan) xmls.push(legacyMan);
+
+  // new videoDeliveryResponse formats
+  const res = video.videoDeliveryResponseFragment?.videoDeliveryResponseResult;
+  const mpdUrls = kidsOf(res?.dash_manifest_urls).map((m) => httpUrl(m?.manifest_url)).filter(Boolean);
+  const manifests = kidsOf(res?.dash_manifests).filter((m) => m?.manifest_xml);
+  for (const m of manifests) { const x = fbManifestOf(m); if (x) xmls.push(x); }
+  if (!manifests.length) mpds.push(...mpdUrls);   // only when the manifests are not already provided
+  for (const p of kidsOf(res?.progressive_urls)) {
+    if (!p?.progressive_url) continue;
+    const q = p?.metadata?.quality;
+    prog.push({ url: p.progressive_url, fid: typeof q === "string" ? q.toLowerCase() : "" });
+  }
+
+  if (!prog.length && !xmls.length && !mpds.length) return;   // "do not append false positive entry w/o any formats"
+  const thumb = video.thumbnailImage?.uri || video.preferred_thumbnail?.image?.uri || null;
+  entries.push({ id: vId, prog, xmls, mpds, thumb });
+}
+
+// The video objects of a relay data dict, in yt-dlp's order: nodes/attachments, mediaset edges, event cover video / video
+function fbEntriesFromData(data, videoId) {
+  const entries = [];
+  const parseAttachment = (att, key = "media") => {
+    const media = att?.[key];
+    if (isDict(media) && media.__typename === "Video") fbGraphqlVideo(media, videoId, entries);
+  };
+
+  const attachments = [];
+  for (const node of asList(firstOf(data, "nodes", "node") ?? [])) {
+    const story = node?.comet_sections?.content?.story;
+    for (const st of [story, story?.attached_story]) {
+      for (const att of kidsOf(st?.attachments)) {
+        for (const r of [att?.styles, att?.style_type_renderer, att?.throwbackStyles?.attachment_target_renderer]) {
+          const a = r?.attachment;
+          if (isDict(a) && Object.keys(a).length) attachments.push(a);
+        }
+      }
+    }
+  }
+  for (const attachment of attachments) {
+    let ns = kidsOf(attachment.all_subattachments?.nodes).filter((n) => isDict(n) && Object.keys(n).length);
+    if (!ns.length) {
+      ns = kidsOf(attachment.target?.attachments).map((a) => a?.styles?.attachment).filter((n) => isDict(n) && Object.keys(n).length);
+    }
+    for (const n of ns) parseAttachment(n);
+    parseAttachment(attachment);
+  }
+
+  for (const edge of asList(data.mediaset?.currMedia?.edges).filter(isDict)) parseAttachment(edge, "node");
+
+  const video = [data.event?.cover_media_renderer?.cover_video, data.video].find((v) => isDict(v) && Object.keys(v).length);
+  if (video) {
+    const atts = [video.story?.attachments, video.creation_story?.attachments].find(Array.isArray) ?? [];
+    for (const a of atts) parseAttachment(a);
+    if (!entries.length) fbGraphqlVideo(video, videoId, entries);
+  }
+  return entries;
+}
+
+// DASH manifests given as a URL: download and parse (BaseURL made absolute)
+async function fbFromMpds(mpds) {
+  for (const u of mpds) {
+    try {
+      log("rvp: FB downloading DASH manifest:", u);
+      const xml = await (await fetch(u, FB_FETCH)).text();
+      const d = dashBestFromXml(xml);
+      if (!d) { log("rvp: FB DASH manifest has no video representation (" + xml.length + " B)"); continue; }
+      if (!/^https?:/i.test(d.url)) d.url = u.replace(/[?#].*$/, "").replace(/[^/]*$/, "") + d.url;
+      return d;
+    } catch (e) { log("rvp: FB DASH manifest failed:", e?.message ?? e); }
+  }
+  return null;
+}
+
+// One parsed entry -> { url, w, h, thumb, note? }. Files with audio first (hd before sd), then DASH (video only).
+async function fbResultFromEntry(e, where) {
+  const rank = (fid) => (fid === "hd" ? 0 : fid === "sd" ? 1 : 2);
+  if (e.prog.length) {
+    const best = e.prog.map((p, i) => ({ ...p, i })).sort((a, b) => rank(a.fid) - rank(b.fid) || a.i - b.i)[0];
+    log("rvp: FB yt-dlp path [" + where + "]: progressive " + (best.fid || "?") + " (of " + e.prog.length + "), thumbnail=" + (e.thumb ? "yes" : "no"));
+    return { url: best.url, w: 0, h: 0, thumb: e.thumb };
+  }
+  for (const x of e.xmls) {
+    const d = dashBestFromXml(fbManifestText(x));
+    if (d) {
+      log("rvp: FB yt-dlp path [" + where + "]: DASH manifest only, thumbnail=" + (e.thumb ? "yes" : "no"));
+      return { url: d.url, w: d.w, h: d.h, thumb: e.thumb, note: "FB: DASH only, video without audio" };
+    }
+  }
+  if (e.mpds.length) {
+    const d = await fbFromMpds(e.mpds);
+    if (d) return { url: d.url, w: d.w, h: d.h, thumb: e.thumb, note: "FB: DASH only, video without audio" };
+  }
+  return null;
+}
+
+async function fbFromYtdlp(html, id, where) {
+  const data = fbRelayPrefetched(html);
+  if (!data) { log("rvp: FB yt-dlp path [" + where + "]: no relay data with " + FB_RELAY_TARGETS.join("/")); return null; }
+  const entries = fbEntriesFromData(data, id);
+  log("rvp: FB yt-dlp path [" + where + "]: data keys=" + JSON.stringify(Object.keys(data)) + ", video entries=" + entries.length +
+    ", IDs=" + JSON.stringify(entries.map((x) => x.id).slice(0, 6)));
+  if (!entries.length) return null;
+  // yt-dlp returns a playlist for several entries; we need one: the entry with our ID, else the first
+  const e = (entries.length > 1 && id && entries.find((x) => x.id === String(id))) || entries[0];
+  return await fbResultFromEntry(e, where);
+}
+
+// Old-style data (yt-dlp: handleServerJS / s.handle and the tahoe response): jsmods "instances" -> VideoConfig -> videoData
+function fbFromInstances(instances, id, where) {
+  if (!Array.isArray(instances)) return null;
+  const vds = [];
+  for (const item of instances) {
+    if (item?.[1]?.[0] === "VideoConfig") {
+      const vi = item?.[2]?.[0];
+      if (vi?.video_id) vds.push(vi);
+    }
+  }
+  if (!vds.length) return null;
+  const vi = (vds.length > 1 && id && vds.find((v) => String(v.video_id) === String(id))) || vds[0];
+  const prog = [], xmls = [];
+  for (const f0 of asList(vi.videoData)) {
+    const f = isDict(f0) ? f0 : Array.isArray(f0) ? f0[0] : null;
+    if (!isDict(f)) continue;
+    for (const q of ["sd", "hd"]) for (const t of ["src", "src_no_ratelimit"]) {
+      const s = f[q + "_" + t];
+      if (s) prog.push({ url: s, fid: q });
+    }
+    const man = fbManifestOf(f);
+    if (man) xmls.push(man);
+  }
+  log("rvp: FB VideoConfig [" + where + "]: files=" + prog.length + ", manifests=" + xmls.length);
+  return prog.length || xmls.length ? { id: String(vi.video_id), prog, xmls, mpds: [], thumb: null } : null;
+}
+function fbFromServerJs(html, id, where) {
+  for (const re of [/handleServerJS\((\{.+\})(?:\);|,")/, /\bs\.handle\((\{.+?\})\);/]) {
+    const m = html.match(re);
+    if (!m) continue;
+    let j;
+    try { j = JSON.parse(m[1]); } catch { continue; }
+    const e = fbFromInstances(j?.instances, id, where);
+    if (e) return e;
+  }
+  return null;
+}
+// The tahoe response: `for (;;);` + JSON with jsmods.instances
+function fbFromTahoeText(text, id, where) {
+  const m = text.match(/for\s*\(\s*;\s*;\s*\)\s*;([\s\S]+)/);
+  let j;
+  try { j = JSON.parse(m ? m[1] : text); } catch { return null; }
+  return fbFromInstances(j?.jsmods?.instances, id, where);
+}
+
+// Fallback: the video and its thumbnail from the JSON object whose nearest id is this video ID
 function fbFromRelay(html, id, where) {
   const found = [];
   for (const b of fbSjsBlocks(html)) fbCollectVideos(b, null, found, 0);
@@ -403,10 +646,18 @@ function parseFBText(html, id, where = "main page") {
   return dash ? { ...dash, note: "FB: DASH only, video without audio" } : null;
 }
 
-// One page -> result: JSON objects first (like yt-dlp), then the text scan; the thumbnail is completed from the page if missing
-function parseFB(html, id, where, pageThumb) {
+// One page -> result. Order: 1) yt-dlp's relay data path, 2) old-style VideoConfig data (handleServerJS),
+// 3) the ID-based JSON search, 4) the text scan. The thumbnail is completed from the page if missing.
+async function parseFB(html, id, where, pageThumb) {
   let out = null;
-  try { out = fbFromRelay(html, id, where); } catch (e) { log("rvp: FB JSON failed:", e?.message ?? e); }
+  try { out = await fbFromYtdlp(html, id, where); } catch (e) { log("rvp: FB yt-dlp path failed:", e?.message ?? e); }
+  if (!out) {
+    try {
+      const e = fbFromServerJs(html, id, where);
+      if (e) out = await fbResultFromEntry(e, where);
+    } catch (e) { log("rvp: FB handleServerJS path failed:", e?.message ?? e); }
+  }
+  if (!out) { try { out = fbFromRelay(html, id, where); } catch (e) { log("rvp: FB JSON failed:", e?.message ?? e); } }
   if (!out) out = parseFBText(html, id, where);
   if (!out) return null;
   if (!out.thumb) out.thumb = pageThumb || fbPageThumb(html, id) || null;
@@ -447,7 +698,7 @@ async function resolveFB(url) {
       ", size=" + html.length + " B, login wall=" + loginWall);
     pageThumb = fbPageThumb(html, id);
     log("rvp: FB page thumbnail:", pageThumb ?? "none");
-    out = parseFB(html, id, "main page, " + name, pageThumb);
+    out = await parseFB(html, id, "main page, " + name, pageThumb);
     if (out || !id) break;   // without a video ID a second fetch would give the same page
   }
   // the thumbnail of the main page is also used when the video itself had to be taken from another request
@@ -474,7 +725,12 @@ async function resolveFB(url) {
     try {
       const t = await fbTahoe(html, id);
       log("rvp: FB tahoe response:", t.length + " B");
-      const o = parseFB(t, id, "tahoe", pageThumb);
+      let o = null;
+      try {
+        const e = fbFromTahoeText(t, id, "tahoe");   // yt-dlp: for (;;); + JSON -> jsmods.instances -> VideoConfig
+        if (e) o = await fbResultFromEntry(e, "tahoe");
+      } catch (e) { log("rvp: FB tahoe instances failed:", e?.message ?? e); }
+      if (!o) o = await parseFB(t, id, "tahoe", pageThumb);
       if (o) return done(o);
     } catch (e) { log("rvp: FB tahoe failed:", e?.message ?? e); }
 
@@ -491,7 +747,7 @@ async function resolveFB(url) {
         const h = await (await fetch(u, FB_FETCH)).text();
         if (LOGIN_RE.test(h)) loginWall = true;
         log("rvp: FB alternative:", u, "(" + h.length + " B)");
-        const o = parseFB(h, id, "alternative", pageThumb);
+        const o = await parseFB(h, id, "alternative", pageThumb);
         if (o) return done(o);
       } catch (e) { log("rvp: FB alternative failed:", u, e?.message ?? e); }
     }
