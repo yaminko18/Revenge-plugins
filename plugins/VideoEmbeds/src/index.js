@@ -2,6 +2,7 @@
 // Simple flow based on the original working version: find video -> a single MESSAGE_UPDATE.
 import { log, FB_RE, IG_RE, TW_RE, MARK, EMBED_MODE, EMBED_REFRESH_MS } from "./helpers.js";
 import { resolve, cache, clearCache, loadCache } from "./resolvers.js";
+import Settings from "./settings.jsx";
 
 const { patcher, metro } = vendetta;
 const FluxDispatcher =
@@ -219,6 +220,7 @@ function probeUI() {
 
 let unpatch;
 export default {
+  settings: Settings,
   onLoad() {
     if (PROBE) setTimeout(probeUI, 3000);
     log("rvp: plugin loaded");
