@@ -197,7 +197,9 @@ function dashVideoOnly(html, anchors = []) {
 // ------------------------------------------------------------ yt-dlp style: JSON in <script data-sjs> blocks
 // yt-dlp: re.findall(r'data-sjs>({.*?...})</script>') + json.loads, then looks for the Video object with the video ID.
 const FB_SJS_FILTER = /"(?:dash_manifest|playable_url|browser_native_|progressive_urls|videoDeliveryResponseFragment|videoDeliveryLegacyFields|thumbnailImage|preferred_thumbnail)/;
+let fbSjsMemo = { html: null, blocks: null };   // the same page is searched for the video and for the thumbnail
 function fbSjsBlocks(html) {
+  if (fbSjsMemo.html === html) return fbSjsMemo.blocks;
   const out = [];
   const re = /data-sjs[^>]*>(\{[\s\S]*?\})<\/script>/g;
   let m;
@@ -205,6 +207,7 @@ function fbSjsBlocks(html) {
     if (!FB_SJS_FILTER.test(m[1])) continue;
     try { out.push(JSON.parse(m[1])); } catch {}
   }
+  fbSjsMemo = { html, blocks: out };
   return out;
 }
 
@@ -219,17 +222,39 @@ const fbThumbOf = (o) => {
   return typeof u === "string" && u ? u : null;
 };
 
-// Collects every object that carries video formats; each gets the video ID (its own id/videoId, or the nearest ancestor's)
-function fbCollectVideos(node, inheritedId, out, depth) {
+// Collects every object that carries video formats. `ids` = numeric ids of the object and of all its ancestors (outermost first):
+// for a reel the formats sit in creation_story -> short_form_video_context -> playback_video, and the video ID can be on an outer object.
+// `anc` = the nearest ancestor objects (thumbnails of a reel can sit there).
+function fbCollectVideos(node, st, out, depth) {
   if (!node || typeof node !== "object" || depth > 60) return;
-  let id = inheritedId;
+  let pushedId = false, pushedAnc = false;
   if (!Array.isArray(node)) {
-    const own = node.videoId ?? node.id;
-    if (own != null && /^\d+$/.test(String(own))) id = String(own);
-    if (fbHasFormats(node)) out.push({ v: node, id });
+    const o = node.videoId ?? node.id;
+    const own = o != null && /^\d+$/.test(String(o)) ? String(o) : null;
+    if (own) { st.ids.push(own); pushedId = true; }
+    if (fbHasFormats(node)) out.push({ v: node, own, near: st.ids.length ? st.ids[st.ids.length - 1] : null, ids: st.ids.slice(), anc: st.anc.slice(-4) });
+    st.anc.push(node); pushedAnc = true;
   }
-  for (const k in node) fbCollectVideos(node[k], id, out, depth + 1);
+  for (const k in node) fbCollectVideos(node[k], st, out, depth + 1);
+  if (pushedId) st.ids.pop();
+  if (pushedAnc) st.anc.pop();
 }
+
+// All video objects in the page.
+//  strict = objects whose NEAREST id is this video ID (the original rule, in page order)
+//  anc    = objects where this ID is on the object or on any outer object (reels), own id first
+function fbPool(html, id) {
+  const found = [];
+  for (const b of fbSjsBlocks(html)) fbCollectVideos(b, { ids: [], anc: [] }, found, 0);
+  if (!id) return { found, strict: found, anc: found };
+  const sid = String(id);
+  const score = (c) => (c.own === sid ? 0 : 1 + (c.ids.length - 1 - c.ids.lastIndexOf(sid)));
+  const strict = found.filter((c) => c.near === sid);
+  const anc = found.filter((c) => c.ids.includes(sid)).sort((x, y) => score(x) - score(y));
+  return { found, strict, anc };
+}
+// Thumbnail of a video object, else of its nearest ancestors (a reel keeps it on creation_story / playback_video)
+const fbThumbOfCand = (c) => fbThumbOf(c.v) || c.anc.slice().reverse().map(fbThumbOf).find(Boolean) || null;
 
 // Formats of one video object (same keys as yt-dlp's parse_graphql_video). Progressive files carry audio; DASH here is video only.
 function fbFormatsOf(v) {
@@ -269,13 +294,15 @@ const FB_SRC = ["progressive HD", "browser_native_hd_url", "playable_url_quality
   "browser_native_sd_url", "playable_url", "hd_src", "sd_src"];
 
 // Main path: the video and its thumbnail come from the same JSON object (the one with this video ID)
-function fbFromRelay(html, id, where) {
-  const found = [];
-  for (const b of fbSjsBlocks(html)) fbCollectVideos(b, null, found, 0);
-  const ids = [...new Set(found.map((c) => c.id))].slice(0, 6);
+// mode "strict": nearest id equals the video ID (original rule) | "ancestor": the ID is on an outer object (reels) |
+// "first": the first video object in the page, like yt-dlp (which does not compare IDs)
+function fbFromRelay(html, id, where, mode = "strict") {
+  const { found, strict, anc } = fbPool(html, id);
+  const ids = [...new Set(found.map((c) => c.own))].slice(0, 6);
   if (!found.length) { log("rvp: FB JSON [" + where + "]: no video objects with formats"); return null; }
-  const pool = id ? found.filter((c) => c.id === String(id)) : found;
-  log("rvp: FB JSON [" + where + "]: video objects=" + found.length + ", with this ID=" + pool.length + ", IDs seen=" + JSON.stringify(ids));
+  const pool = mode === "strict" ? strict : mode === "ancestor" ? anc : found.slice(0, 1);
+  log("rvp: FB JSON [" + where + ", " + mode + "]: video objects=" + found.length + ", strict matches=" + strict.length +
+    ", ancestor matches=" + anc.length + ", own IDs seen=" + JSON.stringify(ids));
   if (!pool.length) return null;
 
   let pick = null;
@@ -289,7 +316,7 @@ function fbFromRelay(html, id, where) {
   if (!pick) return null;
 
   // a thumbnail from the chosen object, else from any other object with this ID
-  const thumb = fbThumbOf(pick.c.v) || pool.map((c) => fbThumbOf(c.v)).find(Boolean) || null;
+  const thumb = fbThumbOfCand(pick.c) || pool.map(fbThumbOfCand).find(Boolean) || null;
   if (pick.f.prog.length) {
     const best = pick.f.prog.slice().sort((a, b) => a.rank - b.rank)[0];
     log("rvp: FB JSON [" + where + "]: selected=" + FB_SRC[best.rank] + ", thumbnail=" + (thumb ? "yes" : "no"));
@@ -381,8 +408,19 @@ function fbThumbDiag(html, id) {
 function fbPageThumb(html, id) {
   try {
     if (id) {
+      const { strict, anc } = fbPool(html, id);
+      for (const c of strict) {
+        const u = fbThumbOfCand(c);
+        if (u) return u;
+      }
       for (const b of fbSjsBlocks(html)) {
         const u = walkThumb(b, String(id), 0);
+        if (u) return u;
+      }
+      const og = fbOgThumb(html);
+      if (og) return og;
+      for (const c of anc) {
+        const u = fbThumbOfCand(c);
         if (u) return u;
       }
     }
@@ -439,13 +477,21 @@ function parseFBText(html, id, where = "main page") {
 
 // One page -> result: JSON objects first (like yt-dlp), then the text scan; the thumbnail is completed from the page if missing
 async function parseFB(html, id, where, pageThumb) {
-  let out = null;
-  try { out = fbFromRelay(html, id, where); } catch (e) { log("rvp: FB JSON failed:", e?.message ?? e); }
-  if (out?.mpds) {
-    const d = await fbFromMpds(out.mpds);
-    out = d ? { url: d.url, w: d.w, h: d.h, thumb: out.thumb, note: "FB: DASH only, video without audio" } : null;
-  }
+  // a manifest URL result ({ mpds }) has to be downloaded first
+  const withMpd = async (o) => {
+    if (!o?.mpds) return o;
+    const d = await fbFromMpds(o.mpds);
+    return d ? { url: d.url, w: d.w, h: d.h, thumb: o.thumb, note: "FB: DASH only, video without audio" } : null;
+  };
+  const tryJson = async (mode) => {
+    try { return await withMpd(fbFromRelay(html, id, where, mode)); }
+    catch (e) { log("rvp: FB JSON (" + mode + ") failed:", e?.message ?? e); return null; }
+  };
+  // order: the original rule first, then the text scan (both as before), and only then the newer, looser rules
+  let out = await tryJson("strict");
   if (!out) out = parseFBText(html, id, where);
+  if (!out && id) out = await tryJson("ancestor");
+  if (!out) out = await tryJson("first");
   if (!out) return null;
   if (!out.thumb) out.thumb = pageThumb || fbPageThumb(html, id) || null;
   return out;
