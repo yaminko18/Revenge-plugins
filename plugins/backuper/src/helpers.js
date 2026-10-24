@@ -9,7 +9,7 @@ export const PREV_FILE = "vendetta/plugin_backup.prev.json";
 const FM = () =>
   window.nativeModuleProxy?.DCDFileManager ?? findByProps("writeFile", "readFile");
 
-// ---------- nizka uroven: subory ----------
+// ---------- subory ----------
 
 async function readFile(path) {
   const fm = FM();
@@ -31,8 +31,16 @@ async function writeFile(path, data) {
   await FM().writeFile("documents", path, data, "utf8");
 }
 
-// Kde Revenge/Vendetta uklada storage pluginu sa lisi podla verzie,
-// preto skusame viac kandidatov. Pouzita cesta sa ulozi do zalohy.
+// Ochrana pri importe: zapisovat sa smie len do vendetta/ alebo plugins/
+function safePath(p) {
+  return (
+    typeof p === "string" &&
+    !p.includes("..") &&
+    (p.startsWith("vendetta/") || p.startsWith("plugins/"))
+  );
+}
+
+// Storage pluginov sa podla verzie uklada na roznych miestach, skusame viac kandidatov.
 function storageCandidates(id) {
   const safe = id.replace(/[^a-zA-Z0-9._-]/g, "_");
   const names = [...new Set([id, encodeURIComponent(id), safe])];
@@ -69,7 +77,18 @@ export async function makeBackup(selfId) {
       data: st?.data ?? null,
     });
   }
-  return { v: 1, date: Date.now(), plugins: list };
+  return { v: 2, date: Date.now(), plugins: list };
+}
+
+export function validate(b) {
+  if (!b || !Array.isArray(b.plugins)) throw new Error("Neplatná záloha");
+  for (const p of b.plugins) {
+    if (typeof p.id !== "string" || !/^https?:\/\//.test(p.id))
+      throw new Error("Neplatné ID pluginu: " + p.id);
+    if (p.storagePath && !safePath(p.storagePath))
+      throw new Error("Neplatná cesta: " + p.storagePath);
+  }
+  return b;
 }
 
 export async function loadBackup() {
@@ -83,32 +102,12 @@ export async function loadBackup() {
   }
 }
 
-export function validate(b) {
-  if (!b || !Array.isArray(b.plugins)) throw new Error("Neplatná záloha");
-  for (const p of b.plugins) {
-    if (typeof p.id !== "string" || !/^https?:\/\//.test(p.id))
-      throw new Error("Neplatné ID pluginu: " + p.id);
-  }
-  return b;
-}
-
-// Zapise zalohu. Prazdnu zalohu neprepise (ochrana pred stratou po cistej instalacii).
-export async function saveBackup(selfId, { force = false } = {}) {
+// Manualna zaloha. Prazdnu zalohu (ziadne pluginy) nezapise, aby neprepisala dobru.
+export async function saveBackup(selfId) {
   const b = await makeBackup(selfId);
-  if (!b.plugins.length && !force) {
-    log("ziadne dalsie pluginy, zalohu neprepisujem");
-    return null;
-  }
+  if (!b.plugins.length) return null;
   const old = await readFile(BACKUP_FILE);
-  if (old) {
-    try {
-      const o = JSON.parse(old);
-      if (JSON.stringify(o.plugins) === JSON.stringify(b.plugins)) {
-        return { ...o, unchanged: true };
-      }
-    } catch {}
-    await writeFile(PREV_FILE, old);
-  }
+  if (old) await writeFile(PREV_FILE, old);
   await writeFile(BACKUP_FILE, JSON.stringify(b));
   log("zaloha ulozena:", b.plugins.length, "pluginov");
   return b;
@@ -127,7 +126,7 @@ export async function exportString() {
 
 // ---------- obnova ----------
 
-// overwriteData: prepise storage aj uz nainstalovanych pluginov (po tom treba restart)
+// overwriteData: prepise storage aj uz nainstalovanych pluginov (treba restart)
 export async function restoreBackup(b, { overwriteData = false } = {}) {
   validate(b);
   const res = { installed: 0, skipped: 0, dataWritten: 0, failed: [] };
@@ -153,6 +152,12 @@ export async function restoreBackup(b, { overwriteData = false } = {}) {
   return res;
 }
 
+export function summary(r) {
+  let s = `Nainštalované: ${r.installed}, preskočené: ${r.skipped}`;
+  if (r.failed.length) s += `, zlyhalo: ${r.failed.join(", ")}`;
+  return s;
+}
+
 export function reloadApp() {
   const m = window.nativeModuleProxy?.BundleUpdaterManager;
   if (m?.reload) {
@@ -175,7 +180,7 @@ export async function diagnose(selfId) {
   for (const [id, p] of Object.entries(plugins)) {
     if (id === selfId) continue;
     const st = await findStorage(id);
-    lines.push(`${p.manifest?.name ?? id}: ${st ? st.path : "storage nenájdený"}`);
+    lines.push(`${p.manifest?.name ?? id}: ${st ? st.path : "nastavenia nenájdené"}`);
   }
   return lines.join("\n");
 }
