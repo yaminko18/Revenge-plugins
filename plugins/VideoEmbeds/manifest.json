@@ -1,7 +1,7 @@
 {
-  "name": "Video Embeds",
-  "description": "Shows a native video player for Facebook, Instagram and Twitter / X video links.",
+  "name": "Backuper",
+  "description": "Zálohuje zoznam pluginov a ich dáta do súboru a vie ich automaticky obnoviť a nainštalovať.",
   "authors": [{ "name": "Yaminko", "id": "666" }],
   "main": "./src/index.js",
-  "vendetta": { "icon": "ic_video" }
+  "vendetta": { "icon": "ic_download_24px" }
 }
