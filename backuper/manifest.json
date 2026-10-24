@@ -1,0 +1,1 @@
+{"name":"Plugin Backup","description":"Zálohuje zoznam pluginov a ich dáta do súboru a vie ich automaticky obnoviť a nainštalovať.","authors":[{"name":"Yaminko"}],"main":"index.js","vendetta":{"icon":"ic_download_24px"},"hash":"0b81393349f913e0fb03607f939d57c4c277eafe494280c74b3ee12483f64673"}
