@@ -684,6 +684,29 @@ async function fbTahoe(html, id) {
   return await r.text();
 }
 
+// Debug: when nothing was found, log what the page we received looks like (compare with what yt-dlp gets)
+function fbPageSummary(html, id) {
+  try {
+    const title = html.match(/<title[^>]*>([^<]{0,120})/i)?.[1]?.trim() ?? null;
+    let blocks = 0, withKeys = 0, parsed = 0, m;
+    const re = /data-sjs[^>]*>(\{[\s\S]*?\})<\/script>/g;
+    while ((m = re.exec(html))) {
+      blocks++;
+      if (!FB_RELAY_FILTER.test(m[1])) continue;
+      withKeys++;
+      try { JSON.parse(m[1]); parsed++; } catch {}
+    }
+    const keys = new Map();
+    const kr = /"([A-Za-z_]*(?:playable|browser_native|progressive|dash_manifest|hls_playlist|thumbnail|short_form_video|playback_video|videoDelivery)[A-Za-z_]*)"\s*:/g;
+    let k;
+    while ((k = kr.exec(html))) keys.set(k[1], (keys.get(k[1]) || 0) + 1);
+    const idCount = id ? html.split('"' + id + '"').length - 1 : 0;
+    log("rvp: FB PAGE SUMMARY: title=" + JSON.stringify(title) + ", size=" + html.length + " B, data-sjs blocks=" + blocks +
+      ", blocks with video keys=" + withKeys + " (parsed OK: " + parsed + "), ID occurrences=" + idCount + ", login wall=" + LOGIN_RE.test(html));
+    log("rvp: FB PAGE SUMMARY keys:", keys.size ? JSON.stringify([...keys].slice(0, 25)) : "none");
+  } catch (e) { log("rvp: FB page summary failed:", e?.message ?? e); }
+}
+
 async function resolveFB(url) {
   const first = normFB(url);
   let html = "", final = first, id = null, loginWall = false, pageThumb = null, out = null;
@@ -752,6 +775,7 @@ async function resolveFB(url) {
       } catch (e) { log("rvp: FB alternative failed:", u, e?.message ?? e); }
     }
   }
+  fbPageSummary(html, id);
   throw new Error(loginWall ? "FB: login required" : "FB: no progressive or DASH video");
 }
 
