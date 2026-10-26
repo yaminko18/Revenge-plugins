@@ -84,18 +84,25 @@ const shouldConvert = (msg) => {
     return isReplyToFiltered(msg);
 };
 
+// Set a property safely (some fields are getter-only or frozen on Message objects)
+const safeSet = (obj, key, value) => {
+    try {
+        obj[key] = value;
+        if (obj[key] === value) return;
+    } catch {}
+    try {
+        Object.defineProperty(obj, key, { value, writable: true, configurable: true, enumerable: true });
+    } catch {}
+};
+
 // Strip all reply info so the message looks like a normal one
 const convertToNormalMessage = (msg) => {
     if (!msg) return;
-    try {
-        msg.referenced_message = null;
-        msg.referencedMessage = null;
-        msg.message_reference = null;
-        msg.messageReference = null;
-        if (msg.type === MESSAGE_TYPE_REPLY) msg.type = MESSAGE_TYPE_DEFAULT;
-    } catch (err) {
-        logger.error(`[${pluginName}] Failed to convert reply:`, err);
-    }
+    safeSet(msg, "referenced_message", null);
+    safeSet(msg, "referencedMessage", null);
+    safeSet(msg, "message_reference", null);
+    safeSet(msg, "messageReference", null);
+    if (msg.type === MESSAGE_TYPE_REPLY) safeSet(msg, "type", MESSAGE_TYPE_DEFAULT);
 };
 
 let patches = [];
@@ -104,8 +111,10 @@ const startPlugin = () => {
     try {
         // Patch dispatcher
         const patch1 = before("dispatch", FluxDispatcher, ([event]) => {
+          try {
+            if (!event) return;
             if (event.type === "LOAD_MESSAGES_SUCCESS") {
-                event.messages = event.messages.filter((msg) => !shouldHide(msg));
+                event.messages = (event.messages ?? []).filter((msg) => !shouldHide(msg));
                 for (const msg of event.messages) {
                     if (shouldConvert(msg)) convertToNormalMessage(msg);
                 }
@@ -118,11 +127,16 @@ const startPlugin = () => {
                     convertToNormalMessage(event.message);
                 }
             }
+          } catch (err) {
+            logger.error(`[${pluginName}] dispatch patch error:`, err);
+          }
         });
         patches.push(patch1);
 
         // Patch render
         const patch2 = before("generate", RowManager.prototype, ([data]) => {
+          try {
+            if (!data) return;
             if (shouldHide(data.message)) {
                 data.renderContentOnly = true;
                 data.message.content = null;
@@ -136,7 +150,13 @@ const startPlugin = () => {
                 }
             } else if (shouldConvert(data.message)) {
                 convertToNormalMessage(data.message);
+                // Row data can carry its own reply info too
+                safeSet(data, "referencedMessage", null);
+                safeSet(data, "referenced_message", null);
             }
+          } catch (err) {
+            logger.error(`[${pluginName}] render patch error:`, err);
+          }
         });
         patches.push(patch2);
 
