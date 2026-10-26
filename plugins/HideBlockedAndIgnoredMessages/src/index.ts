@@ -70,6 +70,23 @@ const shouldHide = (msg) => {
     return false;
 };
 
+// Ids of filtered-author messages we dropped ourselves. Such messages are no longer
+// in the message store, so replies pointing to them can only be recognised by id.
+const droppedIds = new Set();
+const rememberDropped = (msg) => {
+    const id = msg?.id;
+    if (!id || !isFilteredUser(msg.author?.id)) return;
+    droppedIds.add(id);
+    if (droppedIds.size > 2000) droppedIds.delete(droppedIds.values().next().value);
+};
+
+// Id of the message a reply points to
+const getRefId = (msg) =>
+    msg.messageReference?.message_id ??
+    msg.message_reference?.message_id ??
+    msg.referenced_message?.id ??
+    msg.referencedMessage?.message?.id;
+
 // Author id of the message a reply points to.
 // Raw payloads carry it directly; cached records may only hold a reference,
 // so fall back to looking the referenced message up in the message store.
@@ -98,7 +115,10 @@ const shouldConvert = (msg) => {
     if (!msg || !storage.convertReplies) return false;
     if (msg.type !== MESSAGE_TYPE_REPLY) return false;
     if (isFilteredUser(msg.author?.id)) return false; // hidden anyway
-    return isFilteredUser(getRefAuthorId(msg));
+    if (isFilteredUser(getRefAuthorId(msg))) return true;
+
+    const refId = getRefId(msg);
+    return !!refId && droppedIds.has(refId);
 };
 
 // ---------- Reply -> normal message ----------
@@ -161,10 +181,12 @@ const refreshVisibleMessages = () => {
         let hidden = 0;
         let replies = 0;
         let resolved = 0;
+        let viaDropped = 0;
         for (const msg of messages) {
             if (msg.type === MESSAGE_TYPE_REPLY) {
                 replies++;
                 if (getRefAuthorId(msg)) resolved++;
+                else if (droppedIds.has(getRefId(msg))) viaDropped++;
             }
             let update = null;
 
@@ -191,7 +213,7 @@ const refreshVisibleMessages = () => {
             }
         }
 
-        info = `channel=${!!channelId} store=${!!MessageStore} msgs=${messages.length} replies=${replies} resolved=${resolved} converted=${converted} hidden=${hidden}`;
+        info = `channel=${!!channelId} store=${!!MessageStore} msgs=${messages.length} replies=${replies} resolved=${resolved} viaDropped=${viaDropped} dropped=${droppedIds.size} converted=${converted} hidden=${hidden}`;
     } catch (err) {
         info = `ERROR ${err?.message ?? err}`;
         logger.error(`[${pluginName}] Startup refresh failed:`, err);
@@ -212,7 +234,11 @@ const startPlugin = () => {
                 if (!event || event.__hbiRefresh) return;
 
                 if (event.type === "LOAD_MESSAGES_SUCCESS") {
-                    event.messages = (event.messages ?? []).filter((msg) => !shouldHide(msg));
+                    event.messages = (event.messages ?? []).filter((msg) => {
+                        if (!shouldHide(msg)) return true;
+                        rememberDropped(msg);
+                        return false;
+                    });
                     for (const msg of event.messages) {
                         if (shouldConvert(msg)) convertToNormalMessage(msg);
                     }
@@ -220,6 +246,7 @@ const startPlugin = () => {
 
                 if (event.type === "MESSAGE_CREATE" || event.type === "MESSAGE_UPDATE") {
                     if (shouldHide(event.message)) {
+                        rememberDropped(event.message);
                         event.channelId = "0"; // Drop it
                     } else if (shouldConvert(event.message)) {
                         convertToNormalMessage(event.message);
