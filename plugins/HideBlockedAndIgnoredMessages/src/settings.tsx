@@ -8,7 +8,7 @@ const { View, ScrollView } = ReactNative;
 export default function Settings() {
     useProxy(storage);
 
-    // Local state mirrors storage, so the switches update visually right away
+    // Local state mirrors storage so the switches update immediately
     const [state, setState] = React.useState({
         blocked: storage.blocked ?? true,
         ignored: storage.ignored ?? true,
@@ -16,7 +16,7 @@ export default function Settings() {
         convertReplies: storage.convertReplies ?? false,
     });
 
-    const update = (changes: Partial<typeof state>) => {
+    const update = (changes) => {
         for (const key of Object.keys(changes)) storage[key] = changes[key];
         setState((prev) => ({ ...prev, ...changes }));
     };
@@ -40,7 +40,6 @@ export default function Settings() {
                     label="Remove replies to blocked/ignored users"
                     value={state.removeReplies}
                     onValueChange={(v) =>
-                        // Mutually exclusive with converting
                         update(v ? { removeReplies: true, convertReplies: false } : { removeReplies: false })
                     }
                     note="Filters messages replying to blocked or ignored users."
@@ -49,7 +48,6 @@ export default function Settings() {
                     label="Convert replies to normal messages"
                     value={state.convertReplies}
                     onValueChange={(v) =>
-                        // Mutually exclusive with removing
                         update(v ? { convertReplies: true, removeReplies: false } : { convertReplies: false })
                     }
                     note="Replies to blocked or ignored users are not hidden. They are shown as normal messages without the reply header."

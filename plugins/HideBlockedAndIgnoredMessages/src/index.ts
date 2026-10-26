@@ -10,9 +10,9 @@ const { isBlocked, isIgnored } = findByProps("isBlocked", "isIgnored");
 
 const pluginName = "HideBlockedAndIgnoredMessages";
 
-// Discord message type for replies
-const MESSAGE_TYPE_REPLY = 19;
+// Discord message types
 const MESSAGE_TYPE_DEFAULT = 0;
+const MESSAGE_TYPE_REPLY = 19;
 
 function constructMessage(message, channel) {
     let msg = {
@@ -47,7 +47,8 @@ function constructMessage(message, channel) {
     return msg;
 }
 
-// User filter logic
+// ---------- Filtering logic ----------
+
 const isFilteredUser = (id) => {
     if (!id) return false;
     if (storage.blocked && isBlocked(id)) return true;
@@ -55,7 +56,6 @@ const isFilteredUser = (id) => {
     return false;
 };
 
-// Is this message a reply to a blocked/ignored user?
 const isReplyToFiltered = (msg) => {
     if (!msg) return false;
     const refAuthorId =
@@ -64,7 +64,7 @@ const isReplyToFiltered = (msg) => {
     return isFilteredUser(refAuthorId);
 };
 
-// Should the message be hidden completely?
+// Message is hidden completely
 const shouldHide = (msg) => {
     if (!msg) return false;
     if (isFilteredUser(msg.author?.id)) return true;
@@ -73,18 +73,18 @@ const shouldHide = (msg) => {
     if (storage.removeReplies && !storage.convertReplies && isReplyToFiltered(msg)) {
         return true;
     }
-
     return false;
 };
 
-// Should the message be turned into a normal (non-reply) message?
+// Message is shown, but as a normal (non-reply) message
 const shouldConvert = (msg) => {
     if (!msg || !storage.convertReplies) return false;
     if (isFilteredUser(msg.author?.id)) return false; // hidden anyway
     return isReplyToFiltered(msg);
 };
 
-// Set a property safely (some fields are getter-only or frozen on Message objects)
+// ---------- Reply -> normal message ----------
+
 const safeSet = (obj, key, value) => {
     try {
         obj[key] = value;
@@ -95,7 +95,6 @@ const safeSet = (obj, key, value) => {
     } catch (e) {}
 };
 
-// Strip all reply info so the message looks like a normal one (mutates in place)
 const convertToNormalMessage = (msg) => {
     if (!msg) return;
     safeSet(msg, "referenced_message", null);
@@ -105,7 +104,7 @@ const convertToNormalMessage = (msg) => {
     if (msg.type === MESSAGE_TYPE_REPLY) safeSet(msg, "type", MESSAGE_TYPE_DEFAULT);
 };
 
-// For render: build a copy of the message record so frozen/getter-only fields don't matter
+// For render: work on a copy so frozen/getter-only fields don't matter
 const convertedCopy = (msg) => {
     try {
         let copy;
@@ -127,79 +126,59 @@ const convertedCopy = (msg) => {
     }
 };
 
-// TEMP DEBUG: log row info for ignored/blocked rows (remove later)
-let rowDebugCount = 0;
-const debugRow = (data) => {
-    if (rowDebugCount >= 12) return;
-    const m = data?.message;
-    const authorFiltered = isFilteredUser(m?.author?.id);
-    if (!authorFiltered && data?.rowType !== 2) return;
-    rowDebugCount++;
-    try {
-        logger.log(
-            `[${pluginName}][DBG] convert=${!!storage.convertReplies} removeReplies=${!!storage.removeReplies}`,
-            `rowType=${data.rowType}`,
-            `authorFiltered=${authorFiltered}`,
-            `msgType=${m?.type}`,
-            `hasRef=${!!(m?.referenced_message || m?.referencedMessage || m?.messageReference)}`,
-            `dataKeys=${Object.keys(data).join(",")}`
-        );
-    } catch (e) {}
-};
+// ---------- Patches ----------
 
 let patches = [];
 
 const startPlugin = () => {
     try {
-        // Patch dispatcher
         const patch1 = before("dispatch", FluxDispatcher, ([event]) => {
-          try {
-            if (!event) return;
-            if (event.type === "LOAD_MESSAGES_SUCCESS") {
-                event.messages = (event.messages ?? []).filter((msg) => !shouldHide(msg));
-                for (const msg of event.messages) {
-                    if (shouldConvert(msg)) convertToNormalMessage(msg);
-                }
-            }
+            try {
+                if (!event) return;
 
-            if (event.type === "MESSAGE_CREATE" || event.type === "MESSAGE_UPDATE") {
-                if (shouldHide(event.message)) {
-                    event.channelId = "0"; // Drop it
-                } else if (shouldConvert(event.message)) {
-                    convertToNormalMessage(event.message);
+                if (event.type === "LOAD_MESSAGES_SUCCESS") {
+                    event.messages = (event.messages ?? []).filter((msg) => !shouldHide(msg));
+                    for (const msg of event.messages) {
+                        if (shouldConvert(msg)) convertToNormalMessage(msg);
+                    }
                 }
+
+                if (event.type === "MESSAGE_CREATE" || event.type === "MESSAGE_UPDATE") {
+                    if (shouldHide(event.message)) {
+                        event.channelId = "0"; // Drop it
+                    } else if (shouldConvert(event.message)) {
+                        convertToNormalMessage(event.message);
+                    }
+                }
+            } catch (err) {
+                logger.error(`[${pluginName}] dispatch patch error:`, err);
             }
-          } catch (err) {
-            logger.error(`[${pluginName}] dispatch patch error:`, err);
-          }
         });
         patches.push(patch1);
 
-        // Patch render
         const patch2 = before("generate", RowManager.prototype, ([data]) => {
-          try {
-            if (!data) return;
-            debugRow(data);
-            if (shouldHide(data.message)) {
-                data.renderContentOnly = true;
-                data.message.content = null;
-                data.message.reactions = [];
-                data.message.canShowComponents = false;
-                if (data.rowType === 2) {
-                    data.roleStyle = "";
-                    data.text = "[Filtered message. Check plugin settings.]";
-                    data.revealed = false;
-                    data.content = [];
+            try {
+                if (!data) return;
+
+                if (shouldHide(data.message)) {
+                    data.renderContentOnly = true;
+                    data.message.content = null;
+                    data.message.reactions = [];
+                    data.message.canShowComponents = false;
+                    if (data.rowType === 2) {
+                        data.roleStyle = "";
+                        data.text = "[Filtered message. Check plugin settings.]";
+                        data.revealed = false;
+                        data.content = [];
+                    }
+                } else if (shouldConvert(data.message)) {
+                    data.message = convertedCopy(data.message);
+                    safeSet(data, "referencedMessage", null);
+                    safeSet(data, "referenced_message", null);
                 }
-            } else if (shouldConvert(data.message)) {
-                data.message = convertedCopy(data.message);
-                // Row data can carry its own reply info too
-                safeSet(data, "referencedMessage", null);
-                safeSet(data, "referenced_message", null);
+            } catch (err) {
+                logger.error(`[${pluginName}] render patch error:`, err);
             }
-          } catch (err) {
-            logger.error(`[${pluginName}] render patch error:`, err);
-          }
         });
         patches.push(patch2);
 
@@ -213,7 +192,6 @@ export default {
     onLoad: () => {
         logger.log(`Loading ${pluginName}...`);
 
-        // Initialize settings
         storage.blocked ??= true;
         storage.ignored ??= true;
         storage.removeReplies ??= true;
