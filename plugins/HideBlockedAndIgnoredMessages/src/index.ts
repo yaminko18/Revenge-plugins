@@ -89,20 +89,57 @@ const safeSet = (obj, key, value) => {
     try {
         obj[key] = value;
         if (obj[key] === value) return;
-    } catch {}
+    } catch (e) {}
     try {
         Object.defineProperty(obj, key, { value, writable: true, configurable: true, enumerable: true });
-    } catch {}
+    } catch (e) {}
 };
 
-// Strip all reply info so the message looks like a normal one
-const convertToNormalMessage = (msg) => {
+// Debug: log structure of the first few converted replies (see plugin logs)
+let debugCount = 0;
+const debugLog = (where, msg) => {
+    if (debugCount >= 6) return;
+    debugCount++;
+    try {
+        logger.log(
+            `[${pluginName}] convert@${where} type=${msg.type}`,
+            "ownKeys=" + Object.keys(msg).join(","),
+            "protoKeys=" + Object.getOwnPropertyNames(Object.getPrototypeOf(msg) ?? {}).join(",")
+        );
+    } catch (e) {}
+};
+
+// Strip all reply info so the message looks like a normal one (mutates in place)
+const convertToNormalMessage = (msg, where = "dispatch") => {
     if (!msg) return;
+    debugLog(where, msg);
     safeSet(msg, "referenced_message", null);
     safeSet(msg, "referencedMessage", null);
     safeSet(msg, "message_reference", null);
     safeSet(msg, "messageReference", null);
     if (msg.type === MESSAGE_TYPE_REPLY) safeSet(msg, "type", MESSAGE_TYPE_DEFAULT);
+};
+
+// For render: build a copy of the message record so frozen/getter-only fields don't matter
+const convertedCopy = (msg) => {
+    try {
+        let copy;
+        if (typeof msg.merge === "function") {
+            copy = msg.merge({
+                type: MESSAGE_TYPE_DEFAULT,
+                messageReference: null,
+                referencedMessage: null,
+            });
+        } else {
+            copy = Object.assign(Object.create(Object.getPrototypeOf(msg)), msg);
+        }
+        convertToNormalMessage(copy, "render");
+        return copy;
+    } catch (e) {
+        logger.error(`[${pluginName}] copy failed:`, e);
+        convertToNormalMessage(msg, "render-inplace");
+        return msg;
+    }
 };
 
 let patches = [];
@@ -149,7 +186,7 @@ const startPlugin = () => {
                     data.content = [];
                 }
             } else if (shouldConvert(data.message)) {
-                convertToNormalMessage(data.message);
+                data.message = convertedCopy(data.message);
                 // Row data can carry its own reply info too
                 safeSet(data, "referencedMessage", null);
                 safeSet(data, "referenced_message", null);
