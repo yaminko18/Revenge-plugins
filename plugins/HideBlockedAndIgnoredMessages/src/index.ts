@@ -56,74 +56,68 @@ const isFilteredUser = (id) => {
     return false;
 };
 
-const isReplyToFiltered = (msg) => {
+// Message is hidden completely (same logic as the original plugin)
+const shouldHide = (msg) => {
     if (!msg) return false;
+    if (isFilteredUser(msg.author?.id)) return true;
+
+    // "Convert" has priority over "remove"
+    if (storage.removeReplies && !storage.convertReplies && msg.referenced_message) {
+        if (isFilteredUser(msg.referenced_message.author?.id)) return true;
+    }
+
+    return false;
+};
+
+// Message is shown, but as a normal (non-reply) message.
+// Cheap checks first: only real replies are ever inspected.
+const shouldConvert = (msg) => {
+    if (!msg || !storage.convertReplies) return false;
+    if (msg.type !== MESSAGE_TYPE_REPLY) return false;
+    if (isFilteredUser(msg.author?.id)) return false; // hidden anyway
+
     const refAuthorId =
         msg.referenced_message?.author?.id ??
         msg.referencedMessage?.message?.author?.id;
     return isFilteredUser(refAuthorId);
 };
 
-// Message is hidden completely
-const shouldHide = (msg) => {
-    if (!msg) return false;
-    if (isFilteredUser(msg.author?.id)) return true;
-
-    // "Convert" has priority over "remove"
-    if (storage.removeReplies && !storage.convertReplies && isReplyToFiltered(msg)) {
-        return true;
-    }
-    return false;
-};
-
-// Message is shown, but as a normal (non-reply) message
-const shouldConvert = (msg) => {
-    if (!msg || !storage.convertReplies) return false;
-    if (isFilteredUser(msg.author?.id)) return false; // hidden anyway
-    return isReplyToFiltered(msg);
-};
-
 // ---------- Reply -> normal message ----------
 
-const safeSet = (obj, key, value) => {
+const trySet = (obj, key, value) => {
     try {
         obj[key] = value;
-        if (obj[key] === value) return;
-    } catch (e) {}
-    try {
-        Object.defineProperty(obj, key, { value, writable: true, configurable: true, enumerable: true });
     } catch (e) {}
 };
 
 const convertToNormalMessage = (msg) => {
-    if (!msg) return;
-    safeSet(msg, "referenced_message", null);
-    safeSet(msg, "referencedMessage", null);
-    safeSet(msg, "message_reference", null);
-    safeSet(msg, "messageReference", null);
-    if (msg.type === MESSAGE_TYPE_REPLY) safeSet(msg, "type", MESSAGE_TYPE_DEFAULT);
+    trySet(msg, "type", MESSAGE_TYPE_DEFAULT);
+    trySet(msg, "referenced_message", null);
+    trySet(msg, "referencedMessage", null);
+    trySet(msg, "message_reference", null);
+    trySet(msg, "messageReference", null);
 };
 
-// For render: work on a copy so frozen/getter-only fields don't matter
+// For render: a converted copy, created once per message object and then reused
+const copies = new WeakMap();
+
 const convertedCopy = (msg) => {
+    const cached = copies.get(msg);
+    if (cached) return cached;
+
+    let copy;
     try {
-        let copy;
-        if (typeof msg.merge === "function") {
-            copy = msg.merge({
-                type: MESSAGE_TYPE_DEFAULT,
-                messageReference: null,
-                referencedMessage: null,
-            });
-        } else {
-            copy = Object.assign(Object.create(Object.getPrototypeOf(msg)), msg);
-        }
+        copy = typeof msg.merge === "function"
+            ? msg.merge({ type: MESSAGE_TYPE_DEFAULT, messageReference: null, referencedMessage: null })
+            : Object.assign(Object.create(Object.getPrototypeOf(msg)), msg);
         convertToNormalMessage(copy);
-        return copy;
     } catch (e) {
         logger.error(`[${pluginName}] copy failed:`, e);
-        convertToNormalMessage(msg);
         return msg;
     }
+
+    copies.set(msg, copy);
+    return copy;
 };
 
 // ---------- Patches ----------
@@ -173,8 +167,6 @@ const startPlugin = () => {
                     }
                 } else if (shouldConvert(data.message)) {
                     data.message = convertedCopy(data.message);
-                    safeSet(data, "referencedMessage", null);
-                    safeSet(data, "referenced_message", null);
                 }
             } catch (err) {
                 logger.error(`[${pluginName}] render patch error:`, err);
