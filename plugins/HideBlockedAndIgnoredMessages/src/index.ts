@@ -127,6 +127,26 @@ const convertedCopy = (msg) => {
     }
 };
 
+// TEMP DEBUG: log row info for ignored/blocked rows (remove later)
+let rowDebugCount = 0;
+const debugRow = (data) => {
+    if (rowDebugCount >= 12) return;
+    const m = data?.message;
+    const authorFiltered = isFilteredUser(m?.author?.id);
+    if (!authorFiltered && data?.rowType !== 2) return;
+    rowDebugCount++;
+    try {
+        logger.log(
+            `[${pluginName}][DBG] convert=${!!storage.convertReplies} removeReplies=${!!storage.removeReplies}`,
+            `rowType=${data.rowType}`,
+            `authorFiltered=${authorFiltered}`,
+            `msgType=${m?.type}`,
+            `hasRef=${!!(m?.referenced_message || m?.referencedMessage || m?.messageReference)}`,
+            `dataKeys=${Object.keys(data).join(",")}`
+        );
+    } catch (e) {}
+};
+
 let patches = [];
 
 const startPlugin = () => {
@@ -159,6 +179,7 @@ const startPlugin = () => {
         const patch2 = before("generate", RowManager.prototype, ([data]) => {
           try {
             if (!data) return;
+            debugRow(data);
             if (shouldHide(data.message)) {
                 data.renderContentOnly = true;
                 data.message.content = null;
