@@ -1,5 +1,5 @@
 import { FluxDispatcher } from "@vendetta/metro/common";
-import { before, after } from "@vendetta/patcher";
+import { before } from "@vendetta/patcher";
 import { findByProps, findByName, findByStoreName } from "@vendetta/metro";
 import { logger } from "@vendetta";
 import { storage } from "@vendetta/plugin";
@@ -234,38 +234,24 @@ const scheduleChannelSweep = () => {
     }, CHANNEL_SWEEP_DELAY_MS);
 };
 
-// ---------- TEMP DIAGNOSTICS: how Discord builds the "blocked messages" rows ----------
+// ---------- TEMP DIAGNOSTICS: which rows are rendered for filtered / blocked content ----------
 
-let rowsDebugCount = 0;
-const describeValue = (v) => {
+let rowDebugCount = 0;
+const debugRenderRow = (data) => {
+    if (rowDebugCount >= 10) return;
     try {
-        if (v == null) return String(v);
-        if (Array.isArray(v)) return `array(${v.length})`;
-        if (typeof v === "object") return `object{${Object.keys(v).slice(0, 15).join(",")}}`;
-        return typeof v;
-    } catch (e) {
-        return "?";
-    }
-};
+        const m = data.message;
+        const filtered = isFilteredUser(m?.author?.id);
+        const hasRevealed = data.revealed !== undefined;
+        const textLooksBlocked = typeof data.text === "string" && /block|ignor/i.test(data.text);
+        if (!filtered && !hasRevealed && !textLooksBlocked) return;
 
-const debugBuiltRows = (args, res) => {
-    if (rowsDebugCount >= 8) return;
-    try {
-        const rows = Array.isArray(res) ? res : [];
-        const isBlockRow = (r) => {
-            try { return /block|ignor/i.test(String(r?.type) + Object.keys(r ?? {}).join(",")); }
-            catch (e) { return false; }
-        };
-        const blockRows = rows.filter(isBlockRow);
-
-        // Always describe the first calls; afterwards only calls that built a block/ignore row
-        if (rowsDebugCount >= 2 && blockRows.length === 0) return;
-        rowsDebugCount++;
-
-        const types = [...new Set(rows.map((r) => String(r?.type ?? r?.rowType)))].slice(0, 12).join(",");
-        const sample = blockRows.slice(0, 2).map((r) => `${String(r?.type)}{${Object.keys(r).slice(0, 12).join("/")}}`).join(" ; ");
+        rowDebugCount++;
+        const text = typeof data.text === "string" ? data.text.slice(0, 60) : typeof data.text;
         console.log(
-            `[${pluginName}][ROWS] args=[${args.map(describeValue).join(" | ")}] result=${describeValue(res)} types=${types} blockRows=${blockRows.length} ${sample}`
+            `[${pluginName}][ROWS] rowType=${data.rowType} type=${data.type} filtered=${filtered}` +
+            ` hasMessage=${!!m} revealed=${data.revealed} text=${text}` +
+            ` keys=${Object.keys(data).slice(0, 25).join(",")}`
         );
     } catch (e) {}
 };
@@ -311,6 +297,7 @@ const startPlugin = () => {
         const patch2 = before("generate", RowManager.prototype, ([data]) => {
             try {
                 if (!data) return;
+                debugRenderRow(data);
 
                 if (shouldHide(data.message)) {
                     data.renderContentOnly = true;
@@ -331,20 +318,6 @@ const startPlugin = () => {
             }
         });
         patches.push(patch2);
-
-        // TEMP DIAGNOSTICS (does not change behaviour)
-        try {
-            const ChannelMessagesModule = findByProps("flatMapChannelMessages");
-            if (ChannelMessagesModule) {
-                patches.push(after("flatMapChannelMessages", ChannelMessagesModule, (args, res) => {
-                    debugBuiltRows(args, res);
-                }));
-            } else {
-                console.log(`[${pluginName}][ROWS] flatMapChannelMessages not found`);
-            }
-        } catch (err) {
-            console.log(`[${pluginName}][ROWS] patch failed: ${err?.message ?? err}`);
-        }
 
         logger.log(`${pluginName} loaded.`);
     } catch (err) {
