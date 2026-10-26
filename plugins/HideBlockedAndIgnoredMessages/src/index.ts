@@ -3,7 +3,6 @@ import { before } from "@vendetta/patcher";
 import { findByProps, findByName, findByStoreName } from "@vendetta/metro";
 import { logger } from "@vendetta";
 import { storage } from "@vendetta/plugin";
-import { showToast } from "@vendetta/ui/toasts";
 import Settings from "./settings";
 
 const RowManager = findByName("RowManager");
@@ -220,7 +219,6 @@ const refreshVisibleMessages = () => {
     }
 
     console.log(`[${pluginName}] Startup refresh: ${info}`);
-    try { showToast(`HideBlocked refresh: ${info}`); } catch (e) {}
 };
 
 // ---------- Patches ----------
