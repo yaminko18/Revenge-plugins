@@ -13,4 +13,6 @@
   https://yaminko18.github.io/Revenge-plugins/E2EDM/
   <li>VideoEmbeds</li>
   https://yaminko18.github.io/Revenge-plugins/VideoEmbeds/
+  <li>HideBlockedAndIgnoredMessages</li>
+  https://yaminko18.github.io/Revenge-plugins/HideBlockedAndIgnoredMessages/
 </ul>
