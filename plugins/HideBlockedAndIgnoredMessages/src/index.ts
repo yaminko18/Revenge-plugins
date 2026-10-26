@@ -70,17 +70,35 @@ const shouldHide = (msg) => {
     return false;
 };
 
+// Author id of the message a reply points to.
+// Raw payloads carry it directly; cached records may only hold a reference,
+// so fall back to looking the referenced message up in the message store.
+let messageStore = null;
+const getRefAuthorId = (msg) => {
+    const direct =
+        msg.referenced_message?.author?.id ??
+        msg.referencedMessage?.message?.author?.id;
+    if (direct) return direct;
+
+    try {
+        const ref = msg.messageReference ?? msg.message_reference;
+        const refId = ref?.message_id;
+        if (!refId) return undefined;
+        const channelId = ref.channel_id ?? msg.channel_id ?? msg.channelId;
+        messageStore ??= findByStoreName("MessageStore");
+        return messageStore?.getMessage?.(channelId, refId)?.author?.id;
+    } catch (e) {
+        return undefined;
+    }
+};
+
 // Message is shown, but as a normal (non-reply) message.
 // Cheap checks first: only real replies are ever inspected.
 const shouldConvert = (msg) => {
     if (!msg || !storage.convertReplies) return false;
     if (msg.type !== MESSAGE_TYPE_REPLY) return false;
     if (isFilteredUser(msg.author?.id)) return false; // hidden anyway
-
-    const refAuthorId =
-        msg.referenced_message?.author?.id ??
-        msg.referencedMessage?.message?.author?.id;
-    return isFilteredUser(refAuthorId);
+    return isFilteredUser(getRefAuthorId(msg));
 };
 
 // ---------- Reply -> normal message ----------
@@ -141,7 +159,13 @@ const refreshVisibleMessages = () => {
 
         let converted = 0;
         let hidden = 0;
+        let replies = 0;
+        let resolved = 0;
         for (const msg of messages) {
+            if (msg.type === MESSAGE_TYPE_REPLY) {
+                replies++;
+                if (getRefAuthorId(msg)) resolved++;
+            }
             let update = null;
 
             if (shouldConvert(msg)) {
@@ -167,7 +191,7 @@ const refreshVisibleMessages = () => {
             }
         }
 
-        info = `channel=${!!channelId} store=${!!MessageStore} msgs=${messages.length} converted=${converted} hidden=${hidden}`;
+        info = `channel=${!!channelId} store=${!!MessageStore} msgs=${messages.length} replies=${replies} resolved=${resolved} converted=${converted} hidden=${hidden}`;
     } catch (err) {
         info = `ERROR ${err?.message ?? err}`;
         logger.error(`[${pluginName}] Startup refresh failed:`, err);
