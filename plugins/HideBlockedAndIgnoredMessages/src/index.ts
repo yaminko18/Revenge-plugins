@@ -1,6 +1,6 @@
 import { FluxDispatcher } from "@vendetta/metro/common";
 import { before } from "@vendetta/patcher";
-import { findByProps, findByName } from "@vendetta/metro";
+import { findByProps, findByName, findByStoreName } from "@vendetta/metro";
 import { logger } from "@vendetta";
 import { storage } from "@vendetta/plugin";
 import Settings from "./settings";
@@ -120,6 +120,39 @@ const convertedCopy = (msg) => {
     return copy;
 };
 
+// ---------- One-time refresh after start ----------
+
+const REFRESH_DELAY_MS = 2000;
+let refreshTimer = null;
+
+// Re-dispatches a no-op MESSAGE_UPDATE for cached messages of the open channel
+// that need hiding/converting, so their rows are rendered again through our patches.
+const refreshVisibleMessages = () => {
+    try {
+        const MessageStore = findByStoreName("MessageStore");
+        const SelectedChannelStore = findByStoreName("SelectedChannelStore");
+        const channelId = SelectedChannelStore?.getChannelId?.();
+        if (!channelId) return;
+
+        const collection = MessageStore?.getMessages?.(channelId);
+        const messages = collection?.toArray?.() ?? collection?._array ?? [];
+
+        let count = 0;
+        for (const msg of messages) {
+            if (!shouldHide(msg) && !shouldConvert(msg)) continue;
+            FluxDispatcher.dispatch({
+                type: "MESSAGE_UPDATE",
+                message: { id: msg.id, channel_id: channelId },
+                __hbiRefresh: true, // our dispatch patch lets this one through untouched
+            });
+            count++;
+        }
+        logger.log(`[${pluginName}] Startup refresh done (${count} message(s)).`);
+    } catch (err) {
+        logger.error(`[${pluginName}] Startup refresh failed:`, err);
+    }
+};
+
 // ---------- Patches ----------
 
 let patches = [];
@@ -128,7 +161,7 @@ const startPlugin = () => {
     try {
         const patch1 = before("dispatch", FluxDispatcher, ([event]) => {
             try {
-                if (!event) return;
+                if (!event || event.__hbiRefresh) return;
 
                 if (event.type === "LOAD_MESSAGES_SUCCESS") {
                     event.messages = (event.messages ?? []).filter((msg) => !shouldHide(msg));
@@ -200,10 +233,20 @@ export default {
         }
 
         startPlugin();
+
+        // One-time check shortly after start
+        refreshTimer = setTimeout(() => {
+            refreshTimer = null;
+            refreshVisibleMessages();
+        }, REFRESH_DELAY_MS);
     },
 
     onUnload: () => {
         logger.log(`Unloading ${pluginName}...`);
+        if (refreshTimer) {
+            clearTimeout(refreshTimer);
+            refreshTimer = null;
+        }
         for (let unpatch of patches) unpatch();
         patches = [];
         logger.log(`${pluginName} unloaded.`);
