@@ -95,24 +95,9 @@ const safeSet = (obj, key, value) => {
     } catch (e) {}
 };
 
-// Debug: log structure of the first few converted replies (see plugin logs)
-let debugCount = 0;
-const debugLog = (where, msg) => {
-    if (debugCount >= 6) return;
-    debugCount++;
-    try {
-        logger.log(
-            `[${pluginName}] convert@${where} type=${msg.type}`,
-            "ownKeys=" + Object.keys(msg).join(","),
-            "protoKeys=" + Object.getOwnPropertyNames(Object.getPrototypeOf(msg) ?? {}).join(",")
-        );
-    } catch (e) {}
-};
-
 // Strip all reply info so the message looks like a normal one (mutates in place)
-const convertToNormalMessage = (msg, where = "dispatch") => {
+const convertToNormalMessage = (msg) => {
     if (!msg) return;
-    debugLog(where, msg);
     safeSet(msg, "referenced_message", null);
     safeSet(msg, "referencedMessage", null);
     safeSet(msg, "message_reference", null);
@@ -133,11 +118,11 @@ const convertedCopy = (msg) => {
         } else {
             copy = Object.assign(Object.create(Object.getPrototypeOf(msg)), msg);
         }
-        convertToNormalMessage(copy, "render");
+        convertToNormalMessage(copy);
         return copy;
     } catch (e) {
         logger.error(`[${pluginName}] copy failed:`, e);
-        convertToNormalMessage(msg, "render-inplace");
+        convertToNormalMessage(msg);
         return msg;
     }
 };
