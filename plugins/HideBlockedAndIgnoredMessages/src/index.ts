@@ -158,16 +158,20 @@ const convertedCopy = (msg) => {
     return copy;
 };
 
-// ---------- One-time refresh after start ----------
+// ---------- Sweep of cached messages (after start and on channel switch) ----------
 
 const REFRESH_DELAY_MS = 2000;
+const CHANNEL_SWEEP_DELAY_MS = 600;
 let refreshTimer = null;
+let sweepTimer = null;
 
-// Re-dispatches MESSAGE_UPDATE for cached messages of the open channel that need
-// converting/hiding, so their rows are rendered again through our patches.
-// Replies get a real change (type 0, no reference) so Discord must re-render them.
-const refreshVisibleMessages = () => {
+// Goes through cached messages of the open channel:
+// - replies to filtered users get a real change, so their rows are rendered again
+// - filtered standalone messages already in the store are rendered again (and hidden by the render patch)
+const sweepMessages = (reason) => {
     let info = "";
+    let converted = 0;
+    let hidden = 0;
     try {
         const MessageStore = findByStoreName("MessageStore");
         const SelectedChannelStore = findByStoreName("SelectedChannelStore");
@@ -176,8 +180,6 @@ const refreshVisibleMessages = () => {
         const collection = channelId ? MessageStore?.getMessages?.(channelId) : null;
         const messages = collection?.toArray?.() ?? collection?._array ?? [];
 
-        let converted = 0;
-        let hidden = 0;
         let replies = 0;
         let resolved = 0;
         let viaDropped = 0;
@@ -187,38 +189,49 @@ const refreshVisibleMessages = () => {
                 if (getRefAuthorId(msg)) resolved++;
                 else if (droppedIds.has(getRefId(msg))) viaDropped++;
             }
-            let update = null;
 
             if (shouldConvert(msg)) {
-                update = {
-                    id: msg.id,
-                    channel_id: channelId,
-                    type: MESSAGE_TYPE_DEFAULT,
-                    message_reference: null,
-                    referenced_message: null,
-                };
-                converted++;
-            } else if (shouldHide(msg)) {
-                update = { id: msg.id, channel_id: channelId };
-                hidden++;
-            }
-
-            if (update) {
                 FluxDispatcher.dispatch({
                     type: "MESSAGE_UPDATE",
-                    message: update,
+                    message: {
+                        id: msg.id,
+                        channel_id: channelId,
+                        type: MESSAGE_TYPE_DEFAULT,
+                        message_reference: null,
+                        referenced_message: null,
+                    },
                     __hbiRefresh: true, // our dispatch patch lets this one through untouched
                 });
+                converted++;
+            } else if (shouldHide(msg)) {
+                rememberDropped(msg);
+                FluxDispatcher.dispatch({
+                    type: "MESSAGE_UPDATE",
+                    message: { id: msg.id, channel_id: channelId },
+                    __hbiRefresh: true, // our dispatch patch lets this one through untouched
+                });
+                hidden++;
             }
         }
 
         info = `channel=${!!channelId} store=${!!MessageStore} msgs=${messages.length} replies=${replies} resolved=${resolved} viaDropped=${viaDropped} dropped=${droppedIds.size} converted=${converted} hidden=${hidden}`;
     } catch (err) {
         info = `ERROR ${err?.message ?? err}`;
-        logger.error(`[${pluginName}] Startup refresh failed:`, err);
+        logger.error(`[${pluginName}] Sweep (${reason}) failed:`, err);
     }
 
-    console.log(`[${pluginName}] Startup refresh: ${info}`);
+    // Startup always reports, later sweeps only when they changed something
+    if (reason === "startup" || converted + hidden > 0) {
+        console.log(`[${pluginName}] Sweep (${reason}): ${info}`);
+    }
+};
+
+const scheduleChannelSweep = () => {
+    if (sweepTimer) clearTimeout(sweepTimer);
+    sweepTimer = setTimeout(() => {
+        sweepTimer = null;
+        sweepMessages("channel");
+    }, CHANNEL_SWEEP_DELAY_MS);
 };
 
 // ---------- Patches ----------
@@ -242,8 +255,11 @@ const startPlugin = () => {
                     }
                 }
 
+                if (event.type === "CHANNEL_SELECT") scheduleChannelSweep();
+
                 if (event.type === "MESSAGE_CREATE" || event.type === "MESSAGE_UPDATE") {
-                    if (shouldHide(event.message)) {
+                    // Partial updates carry no author, so also match by remembered id
+                    if (shouldHide(event.message) || droppedIds.has(event.message?.id)) {
                         rememberDropped(event.message);
                         event.channelId = "0"; // Drop it
                     } else if (shouldConvert(event.message)) {
@@ -310,7 +326,7 @@ export default {
         // One-time check shortly after start
         refreshTimer = setTimeout(() => {
             refreshTimer = null;
-            refreshVisibleMessages();
+            sweepMessages("startup");
         }, REFRESH_DELAY_MS);
     },
 
@@ -319,6 +335,10 @@ export default {
         if (refreshTimer) {
             clearTimeout(refreshTimer);
             refreshTimer = null;
+        }
+        if (sweepTimer) {
+            clearTimeout(sweepTimer);
+            sweepTimer = null;
         }
         for (let unpatch of patches) unpatch();
         patches = [];
