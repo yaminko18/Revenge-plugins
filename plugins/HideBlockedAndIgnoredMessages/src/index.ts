@@ -3,6 +3,7 @@ import { before } from "@vendetta/patcher";
 import { findByProps, findByName, findByStoreName } from "@vendetta/metro";
 import { logger } from "@vendetta";
 import { storage } from "@vendetta/plugin";
+import { showToast } from "@vendetta/ui/toasts";
 import Settings from "./settings";
 
 const RowManager = findByName("RowManager");
@@ -125,32 +126,55 @@ const convertedCopy = (msg) => {
 const REFRESH_DELAY_MS = 2000;
 let refreshTimer = null;
 
-// Re-dispatches a no-op MESSAGE_UPDATE for cached messages of the open channel
-// that need hiding/converting, so their rows are rendered again through our patches.
+// Re-dispatches MESSAGE_UPDATE for cached messages of the open channel that need
+// converting/hiding, so their rows are rendered again through our patches.
+// Replies get a real change (type 0, no reference) so Discord must re-render them.
 const refreshVisibleMessages = () => {
+    let info = "";
     try {
         const MessageStore = findByStoreName("MessageStore");
         const SelectedChannelStore = findByStoreName("SelectedChannelStore");
         const channelId = SelectedChannelStore?.getChannelId?.();
-        if (!channelId) return;
 
-        const collection = MessageStore?.getMessages?.(channelId);
+        const collection = channelId ? MessageStore?.getMessages?.(channelId) : null;
         const messages = collection?.toArray?.() ?? collection?._array ?? [];
 
-        let count = 0;
+        let converted = 0;
+        let hidden = 0;
         for (const msg of messages) {
-            if (!shouldHide(msg) && !shouldConvert(msg)) continue;
-            FluxDispatcher.dispatch({
-                type: "MESSAGE_UPDATE",
-                message: { id: msg.id, channel_id: channelId },
-                __hbiRefresh: true, // our dispatch patch lets this one through untouched
-            });
-            count++;
+            let update = null;
+
+            if (shouldConvert(msg)) {
+                update = {
+                    id: msg.id,
+                    channel_id: channelId,
+                    type: MESSAGE_TYPE_DEFAULT,
+                    message_reference: null,
+                    referenced_message: null,
+                };
+                converted++;
+            } else if (shouldHide(msg)) {
+                update = { id: msg.id, channel_id: channelId };
+                hidden++;
+            }
+
+            if (update) {
+                FluxDispatcher.dispatch({
+                    type: "MESSAGE_UPDATE",
+                    message: update,
+                    __hbiRefresh: true, // our dispatch patch lets this one through untouched
+                });
+            }
         }
-        logger.log(`[${pluginName}] Startup refresh done (${count} message(s)).`);
+
+        info = `channel=${!!channelId} store=${!!MessageStore} msgs=${messages.length} converted=${converted} hidden=${hidden}`;
     } catch (err) {
+        info = `ERROR ${err?.message ?? err}`;
         logger.error(`[${pluginName}] Startup refresh failed:`, err);
     }
+
+    console.log(`[${pluginName}] Startup refresh: ${info}`);
+    try { showToast(`HideBlocked refresh: ${info}`); } catch (e) {}
 };
 
 // ---------- Patches ----------
